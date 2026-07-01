@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
-import { jobStatusLabel, serviceTypeLabel, type JobStatus, type Job } from "@/data/crm";
+import { jobStatusLabel, type JobStatus, type Job } from "@/data/crm";
+import { useServices, serviceLabel } from "@/lib/services";
 import { Plus, Search, Clock, ChevronDown, X, Loader2, RefreshCw } from "lucide-react";
 
 const STATUS_FILTERS: { label: string; value: JobStatus | "all" }[] = [
@@ -13,13 +14,6 @@ const STATUS_FILTERS: { label: string; value: JobStatus | "all" }[] = [
   { label: "In Progress", value: "in-progress" },
   { label: "Complete", value: "complete" },
   { label: "Invoiced", value: "invoiced" },
-];
-
-const SERVICE_TYPES = [
-  { value: "lawn", label: "Lawn Care" },
-  { value: "pressure-washing", label: "Pressure Washing" },
-  { value: "window-cleaning", label: "Window Cleaning" },
-  { value: "custom", label: "Custom" },
 ];
 
 const RECURRING_OPTIONS = [
@@ -68,6 +62,7 @@ function Field({ label, value, onChange, placeholder, type = "text", required, e
 }
 
 export function JobsPage() {
+  const { services } = useServices();
   const [jobList, setJobList] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,7 +157,7 @@ export function JobsPage() {
   };
 
   const resetForm = () => {
-    setCustomerId(""); setServiceType("lawn"); setTitle("");
+    setCustomerId(""); setServiceType(services[0]?.value ?? ""); setTitle("");
     setScheduledDate(""); setScheduledTime(""); setRecurring("none");
     setNotes(""); setErrors({});
   };
@@ -238,7 +233,7 @@ export function JobsPage() {
                   <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                     <span className="text-[12px] text-ink-quiet">{getCustomerName(job.customerId)}</span>
                     <span className="text-[12px] text-ink-quiet">·</span>
-                    <span className="text-[12px] text-ink-quiet">{serviceTypeLabel(job.serviceType)}</span>
+                    <span className="text-[12px] text-ink-quiet">{serviceLabel(job.serviceType, services)}</span>
                     {job.scheduledDate && (
                       <>
                         <span className="text-[12px] text-ink-quiet">·</span>
@@ -311,7 +306,7 @@ export function JobsPage() {
                     onChange={(e) => setServiceType(e.target.value)}
                     className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white appearance-none focus:outline-none focus:border-ink transition-colors"
                   >
-                    {SERVICE_TYPES.map((t) => (
+                    {services.map((t) => (
                       <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>

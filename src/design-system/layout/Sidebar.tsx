@@ -10,6 +10,8 @@ import {
   Receipt,
   Settings,
   Leaf,
+  Wallet,
+  Wrench,
 } from "lucide-react";
 
 const navItems = [
@@ -19,6 +21,8 @@ const navItems = [
   { to: "/schedule", icon: CalendarDays, label: "Schedule" },
   { to: "/estimates", icon: FileText, label: "Estimates" },
   { to: "/invoices", icon: Receipt, label: "Invoices" },
+  { to: "/expenses", icon: Wallet, label: "Expenses" },
+  { to: "/services", icon: Wrench, label: "Services" },
 ];
 
 export function Sidebar() {

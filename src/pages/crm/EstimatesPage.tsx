@@ -4,7 +4,8 @@ import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { estimateStatusLabel, type EstimateStatus, type Estimate, type LineItem } from "@/data/crm";
-import { Plus, FileText, X, Trash2, ChevronDown, Loader2, Send, Clock } from "lucide-react";
+import { useServices } from "@/lib/services";
+import { Plus, FileText, X, Trash2, ChevronDown, Loader2, Send, Clock, Star, Sparkles } from "lucide-react";
 
 const STATUS_FILTERS: { label: string; value: EstimateStatus | "all" }[] = [
   { label: "All", value: "all" },
@@ -46,11 +47,28 @@ function Field({ label, value, onChange, placeholder, type = "text", required, e
   );
 }
 
-const SERVICE_TYPES = [
-  { value: "lawn", label: "Lawn Care" },
-  { value: "pressure-washing", label: "Pressure Washing" },
-  { value: "window-cleaning", label: "Window Cleaning" },
-  { value: "custom", label: "Custom" },
+const TIERS = [
+  {
+    value: "good" as const,
+    label: "Good",
+    description: "Essential service, basic materials",
+    badge: "bg-paper-warm border-paper-deep text-ink-soft",
+    icon: null,
+  },
+  {
+    value: "better" as const,
+    label: "Better",
+    description: "Upgraded materials, priority scheduling",
+    badge: "bg-[#e3f2fd] border-[#90caf9] text-[#1565c0]",
+    icon: Star,
+  },
+  {
+    value: "best" as const,
+    label: "Best",
+    description: "Premium finish, warranty included",
+    badge: "bg-[#fff8e1] border-[#ffe082] text-[#f57f17]",
+    icon: Sparkles,
+  },
 ];
 
 const FOLLOW_UP_OPTIONS = [
@@ -62,6 +80,7 @@ const FOLLOW_UP_OPTIONS = [
 ];
 
 export function EstimatesPage() {
+  const { services } = useServices();
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,6 +92,7 @@ export function EstimatesPage() {
   // form state
   const [customerId, setCustomerId] = useState("");
   const [serviceType, setServiceType] = useState("lawn");
+  const [tier, setTier] = useState<"none" | "good" | "better" | "best">("none");
   const [notes, setNotes] = useState("");
   const [followUpDays, setFollowUpDays] = useState(3);
   const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string; type: "labor" | "material" | "service" }[]>([
@@ -156,6 +176,7 @@ export function EstimatesPage() {
       .insert({
         customer_id: customerId,
         service_type: serviceType,
+        tier: tier === "none" ? null : tier,
         status: "draft",
         line_items: items,
         notes: notes.trim() || null,
@@ -177,7 +198,7 @@ export function EstimatesPage() {
   };
 
   const resetForm = () => {
-    setCustomerId(""); setServiceType("lawn"); setNotes("");
+    setCustomerId(""); setServiceType("lawn"); setTier("none"); setNotes("");
     setFollowUpDays(3); setErrors({});
     setLineItems([{ description: "", quantity: "1", unitPrice: "", type: "service" }]);
   };
@@ -244,7 +265,15 @@ export function EstimatesPage() {
                   className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 items-center px-5 py-4 hover:bg-paper-warm transition-colors"
                 >
                   <div className="min-w-0">
-                    <p className="text-[14px] font-semibold text-ink truncate">{getCustomerName(est.customerId)}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[14px] font-semibold text-ink truncate">{getCustomerName(est.customerId)}</p>
+                      {(est as any).tier && (() => {
+                        const tierDef = TIERS.find((t) => t.value === (est as any).tier);
+                        return tierDef ? (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${tierDef.badge}`}>{tierDef.label}</span>
+                        ) : null;
+                      })()}
+                    </div>
                     <p className="text-[12px] text-ink-quiet">
                       {est.lineItems.length} item{est.lineItems.length !== 1 ? "s" : ""}
                     </p>
@@ -316,12 +345,47 @@ export function EstimatesPage() {
                     onChange={(e) => setServiceType(e.target.value)}
                     className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white appearance-none focus:outline-none focus:border-ink transition-colors"
                   >
-                    {SERVICE_TYPES.map((t) => (
+                    {services.map((t) => (
                       <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-quiet pointer-events-none" />
                 </div>
+              </div>
+
+              {/* Good / Better / Best Tier */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[12px] font-semibold text-ink-quiet">Proposal Tier</label>
+                  {tier !== "none" && (
+                    <button onClick={() => setTier("none")} className="text-[11px] text-ink-quiet hover:text-ink">Clear</button>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {TIERS.map((t) => {
+                    const Icon = t.icon;
+                    const active = tier === t.value;
+                    return (
+                      <button
+                        key={t.value}
+                        type="button"
+                        onClick={() => setTier(active ? "none" : t.value)}
+                        className={`relative flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl border-2 text-left transition-all ${
+                          active ? `border-current ${t.badge}` : "border-paper-deep bg-white hover:border-ink/30"
+                        }`}
+                      >
+                        {Icon && <Icon className="w-4 h-4" />}
+                        <p className={`text-[13px] font-bold ${active ? "" : "text-ink"}`}>{t.label}</p>
+                        <p className={`text-[10px] text-center leading-tight ${active ? "opacity-80" : "text-ink-quiet"}`}>{t.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                {tier !== "none" && (
+                  <p className="text-[11px] text-ink-quiet mt-2 px-1">
+                    Tier is saved with the estimate and shown on the customer-facing PDF.
+                  </p>
+                )}
               </div>
 
               {/* Line items */}

@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
-import { serviceTypeLabel, getJobsForCustomer, type Customer } from "@/data/crm";
+import { getJobsForCustomer, type Customer } from "@/data/crm";
+import { useServices, serviceLabel } from "@/lib/services";
 import { supabase } from "@/lib/supabase";
 import { Search, Plus, ChevronRight, MapPin, Phone, Mail, X, User, Loader2 } from "lucide-react";
 
@@ -58,6 +59,7 @@ function Field({
 }
 
 export function CustomersPage() {
+  const { services } = useServices();
   const [customerList, setCustomerList] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -246,7 +248,7 @@ export function CustomersPage() {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {customer.serviceTypes.map((t) => (
-                      <Badge key={t} variant={serviceTypeBadge(t)}>{serviceTypeLabel(t)}</Badge>
+                      <Badge key={t} variant={serviceTypeBadge(t)}>{serviceLabel(t, services)}</Badge>
                     ))}
                     {activeCount > 0 && (
                       <span className="text-[12px] text-ink-quiet ml-1">{activeCount} active job{activeCount > 1 ? "s" : ""}</span>

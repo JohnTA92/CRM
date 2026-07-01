@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { serviceTypeLabel, type Job } from "@/data/crm";
+import { type Job } from "@/data/crm";
+import { useServices, serviceLabel } from "@/lib/services";
 import { supabase } from "@/lib/supabase";
-import { ChevronLeft, ChevronRight, Clock, X, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, X, Loader2, MapPin, Navigation } from "lucide-react";
 
 const DAY_HEADERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -45,6 +46,7 @@ const SERVICE_COLORS: Record<string, string> = {
 };
 
 export function SchedulePage() {
+  const { services } = useServices();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -52,6 +54,7 @@ export function SchedulePage() {
   const [selectedISO, setSelectedISO] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Record<string, string>>({});
+  const [customerAddresses, setCustomerAddresses] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -62,7 +65,7 @@ export function SchedulePage() {
     setLoading(true);
     const [jobRes, custRes] = await Promise.all([
       supabase.from("jobs").select("*"),
-      supabase.from("customers").select("id, name"),
+      supabase.from("customers").select("id, name, address, city, state, zip"),
     ]);
     if (jobRes.data) {
       setJobs(jobRes.data.map((row: any): Job => ({
@@ -83,9 +86,17 @@ export function SchedulePage() {
       })));
     }
     if (custRes.data) {
-      const map: Record<string, string> = {};
-      custRes.data.forEach((c: any) => { map[c.id] = c.name; });
-      setCustomers(map);
+      const nameMap: Record<string, string> = {};
+      const addrMap: Record<string, string> = {};
+      custRes.data.forEach((c: any) => {
+        nameMap[c.id] = c.name;
+        if (c.address) {
+          const parts = [c.address, c.city, c.state, c.zip].filter(Boolean);
+          addrMap[c.id] = parts.join(", ");
+        }
+      });
+      setCustomers(nameMap);
+      setCustomerAddresses(addrMap);
     }
     setLoading(false);
   }
@@ -323,6 +334,23 @@ export function SchedulePage() {
                   <p className="text-[11px] text-ink-quiet mt-0.5">{label}</p>
                 </div>
               ))}
+              {(() => {
+                const addressedJobs = selectedDayJobs.filter((j) => customerAddresses[j.customerId]);
+                if (addressedJobs.length < 2) return null;
+                const waypoints = addressedJobs.slice(0, -1).map((j) => encodeURIComponent(customerAddresses[j.customerId])).join("|");
+                const destination = encodeURIComponent(customerAddresses[addressedJobs[addressedJobs.length - 1].customerId]);
+                const mapsUrl = `https://www.google.com/maps/dir/?api=1&waypoints=${waypoints}&destination=${destination}`;
+                return (
+                  <a
+                    href={mapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-[#e3f2fd] text-[#1565c0] hover:bg-[#bbdefb] transition-colors border border-[#90caf9]"
+                  >
+                    <Navigation className="w-3.5 h-3.5" /> Route All
+                  </a>
+                );
+              })()}
               <button
                 onClick={() => setSelectedISO(null)}
                 className="ml-2 p-1.5 rounded-lg hover:bg-paper-dark transition-colors text-ink-quiet"
@@ -361,23 +389,41 @@ export function SchedulePage() {
                   {/* Job slots */}
                   <div className="flex-1 px-3 py-1.5 flex flex-col gap-1.5">
                     {jobsThisHour.map((job) => (
-                      <Link
+                      <div
                         key={job.id}
-                        to={`/jobs/${job.id}`}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-[12px] font-medium hover:shadow-sm transition-shadow ${
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-[12px] font-medium ${
                           SERVICE_COLORS[job.serviceType] ?? SERVICE_COLORS.custom
                         }`}
                       >
                         <Clock className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
                         <div className="flex-1 min-w-0">
-                          <p className="font-semibold truncate">{job.title}</p>
+                          <Link to={`/jobs/${job.id}`} className="font-semibold truncate block hover:underline">{job.title}</Link>
                           <p className="opacity-70 text-[11px] truncate">
                             {getCustomerName(job.customerId)}
                             {job.durationMinutes ? ` · ${job.durationMinutes}min` : ""}
                           </p>
+                          {customerAddresses[job.customerId] && (
+                            <p className="opacity-60 text-[10px] truncate flex items-center gap-0.5 mt-0.5">
+                              <MapPin className="w-2.5 h-2.5 flex-shrink-0" />
+                              {customerAddresses[job.customerId]}
+                            </p>
+                          )}
                         </div>
-                        <span className="text-[11px] opacity-60 flex-shrink-0">{serviceTypeLabel(job.serviceType)}</span>
-                      </Link>
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                          <span className="text-[11px] opacity-60">{serviceLabel(job.serviceType, services)}</span>
+                          {customerAddresses[job.customerId] && (
+                            <a
+                              href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(customerAddresses[job.customerId])}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-0.5 text-[10px] font-semibold opacity-70 hover:opacity-100 transition-opacity"
+                            >
+                              <Navigation className="w-2.5 h-2.5" /> Directions
+                            </a>
+                          )}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>

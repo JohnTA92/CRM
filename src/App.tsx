@@ -1,53 +1,50 @@
-import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
-import { Navbar } from "@/design-system/layout/Navbar";
-import { Container } from "@/design-system/layout/Container";
-import { Button } from "@/design-system/primitives/Button";
-import { HomePage } from "@/pages/HomePage";
-import { SearchPage } from "@/pages/SearchPage";
-import { ListingDetailPage } from "@/pages/ListingDetailPage";
-import { TripsPage } from "@/pages/TripsPage";
-import { TripDetailPage } from "@/pages/TripDetailPage";
-import { MessagesPage } from "@/pages/MessagesPage";
-import { WishlistsPage } from "@/pages/WishlistsPage";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { ThemeProvider } from "@/lib/theme";
+import { Sidebar } from "@/design-system/layout/Sidebar";
+import { DashboardPage } from "@/pages/crm/DashboardPage";
+import { CustomersPage } from "@/pages/crm/CustomersPage";
+import { CustomerDetailPage } from "@/pages/crm/CustomerDetailPage";
+import { JobsPage } from "@/pages/crm/JobsPage";
+import { JobDetailPage } from "@/pages/crm/JobDetailPage";
+import { SchedulePage } from "@/pages/crm/SchedulePage";
+import { EstimatesPage } from "@/pages/crm/EstimatesPage";
+import { EstimateDetailPage } from "@/pages/crm/EstimateDetailPage";
+import { InvoicesPage } from "@/pages/crm/InvoicesPage";
+import { InvoiceDetailPage } from "@/pages/crm/InvoiceDetailPage";
+import { SettingsPage } from "@/pages/crm/SettingsPage";
 
 function NotFound() {
   return (
-    <Container className="py-32 text-center max-w-md">
-      <p className="text-[80px] font-semibold text-ink leading-none mb-6">404</p>
-      <p className="text-[24px] font-semibold text-ink mb-2">
-        We can't seem to find that page
-      </p>
-      <p className="text-[14px] text-ink-quiet mb-8">
-        It may have moved, or the link is broken.
-      </p>
-      <div className="flex items-center justify-center gap-3">
-        <Link to="/">
-          <Button>Back to home</Button>
-        </Link>
-        <Link to="/search">
-          <Button variant="outline">Browse stays</Button>
-        </Link>
-      </div>
-    </Container>
+    <div className="flex items-center justify-center h-64 text-ink-quiet text-[14px]">
+      Page not found.
+    </div>
   );
 }
 
 export default function App() {
   return (
+    <ThemeProvider>
     <BrowserRouter>
-      <Navbar />
-      <main className="bg-white min-h-screen">
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/listing/:id" element={<ListingDetailPage />} />
-          <Route path="/trips" element={<TripsPage />} />
-          <Route path="/trips/:id" element={<TripDetailPage />} />
-          <Route path="/messages" element={<MessagesPage />} />
-          <Route path="/wishlists" element={<WishlistsPage />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </main>
+      <div className="flex min-h-screen bg-paper-warm">
+        <Sidebar />
+        <main className="ml-56 flex-1 min-w-0">
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/customers" element={<CustomersPage />} />
+            <Route path="/customers/:id" element={<CustomerDetailPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/jobs/:id" element={<JobDetailPage />} />
+            <Route path="/schedule" element={<SchedulePage />} />
+            <Route path="/estimates" element={<EstimatesPage />} />
+            <Route path="/estimates/:id" element={<EstimateDetailPage />} />
+            <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </main>
+      </div>
     </BrowserRouter>
+    </ThemeProvider>
   );
 }

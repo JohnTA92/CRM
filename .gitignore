@@ -27,3 +27,4 @@ pnpm-debug.log*
 tempo/.tempo/
 tempo/node_modules/
 tempo/dist/
+.tempo/

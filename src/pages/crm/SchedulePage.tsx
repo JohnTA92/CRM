@@ -177,30 +177,6 @@ export function SchedulePage() {
         );
       })()}
 
-      {/* Crew filter */}
-      {crewMembers.length > 0 && (
-        <div className="flex gap-1.5 mb-4 flex-wrap">
-          <button
-            onClick={() => setCrewFilter("all")}
-            className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${
-              crewFilter === "all" ? "bg-ink text-white" : "bg-paper-warm text-ink-soft hover:bg-paper-dark"
-            }`}
-          >
-            All crew
-          </button>
-          {crewMembers.map((cm) => (
-            <button
-              key={cm.id}
-              onClick={() => setCrewFilter(cm.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${
-                crewFilter === cm.id ? "bg-ink text-white" : "bg-paper-warm text-ink-soft hover:bg-paper-dark"
-              }`}
-            >
-              {cm.name.split(" ")[0]}
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="flex gap-5">
         {/* Calendar grid */}

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { jobs, crewMembers, getCustomer, getCrewMember, serviceTypeLabel } from "@/data/crm";
-import { ChevronLeft, ChevronRight, Clock, X } from "lucide-react";
+import { serviceTypeLabel, type Job } from "@/data/crm";
+import { supabase } from "@/lib/supabase";
+import { ChevronLeft, ChevronRight, Clock, X, Loader2 } from "lucide-react";
 
 const DAY_HEADERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -49,6 +50,45 @@ export function SchedulePage() {
   const [month, setMonth] = useState(today.getMonth());
   const [crewFilter, setCrewFilter] = useState("all");
   const [selectedISO, setSelectedISO] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [customers, setCustomers] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    const [jobRes, custRes] = await Promise.all([
+      supabase.from("jobs").select("*"),
+      supabase.from("customers").select("id, name"),
+    ]);
+    if (jobRes.data) {
+      setJobs(jobRes.data.map((row: any): Job => ({
+        id: row.id,
+        customerId: row.customer_id,
+        serviceType: row.service_type,
+        title: row.title,
+        status: row.status,
+        scheduledDate: row.scheduled_date,
+        scheduledTime: row.scheduled_time,
+        durationMinutes: row.duration_minutes ?? 60,
+        assignedTo: row.assigned_to,
+        notes: row.notes ?? "",
+        estimateId: row.estimate_id,
+        invoiceId: row.invoice_id,
+        recurring: row.recurring ?? "none",
+        createdAt: row.created_at?.split("T")[0] ?? "",
+      })));
+    }
+    if (custRes.data) {
+      const map: Record<string, string> = {};
+      custRes.data.forEach((c: any) => { map[c.id] = c.name; });
+      setCustomers(map);
+    }
+    setLoading(false);
+  }
 
   const prevMonth = () => {
     if (month === 0) { setMonth(11); setYear(y => y - 1); }
@@ -66,6 +106,8 @@ export function SchedulePage() {
 
   const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
   const grid = getMonthGrid(year, month);
+
+  const getCustomerName = (id: string) => customers[id] ?? "";
 
   const unassigned = jobs.filter(
     (j) => !j.assignedTo && j.scheduledDate && ["scheduled", "in-progress"].includes(j.status),
@@ -87,7 +129,10 @@ export function SchedulePage() {
     <div className="p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
-        <h1 className="text-[22px] font-semibold text-ink">Schedule</h1>
+        <h1 className="text-[22px] font-semibold text-ink flex items-center gap-2">
+          Schedule
+          {loading && <Loader2 className="w-4 h-4 animate-spin text-ink-quiet" />}
+        </h1>
         <div className="flex items-center gap-2">
           <button
             onClick={goToday}
@@ -223,30 +268,27 @@ export function SchedulePage() {
                     )}
                   </div>
 
-                  {dayJobs.slice(0, 3).map((job) => {
-                    const customer = getCustomer(job.customerId);
-                    return (
-                      <div
-                        key={job.id}
-                        onClick={(e) => e.stopPropagation()}
-                        className="contents"
+                  {dayJobs.slice(0, 3).map((job) => (
+                    <div
+                      key={job.id}
+                      onClick={(e) => e.stopPropagation()}
+                      className="contents"
+                    >
+                      <Link
+                        to={`/jobs/${job.id}`}
+                        className={`block rounded border px-1.5 py-1 text-[11px] font-medium leading-tight hover:shadow-sm transition-shadow truncate ${
+                          SERVICE_COLORS[job.serviceType] ?? SERVICE_COLORS.custom
+                        }`}
                       >
-                        <Link
-                          to={`/jobs/${job.id}`}
-                          className={`block rounded border px-1.5 py-1 text-[11px] font-medium leading-tight hover:shadow-sm transition-shadow truncate ${
-                            SERVICE_COLORS[job.serviceType] ?? SERVICE_COLORS.custom
-                          }`}
-                        >
-                          <span className="flex items-center gap-0.5">
-                            {job.scheduledTime && (
-                              <span className="opacity-70 font-normal">{job.scheduledTime}</span>
-                            )}
-                            <span className="truncate">{customer?.name ?? job.title}</span>
-                          </span>
-                        </Link>
-                      </div>
-                    );
-                  })}
+                        <span className="flex items-center gap-0.5">
+                          {job.scheduledTime && (
+                            <span className="opacity-70 font-normal">{job.scheduledTime}</span>
+                          )}
+                          <span className="truncate">{getCustomerName(job.customerId) || job.title}</span>
+                        </span>
+                      </Link>
+                    </div>
+                  ))}
                   {dayJobs.length > 3 && (
                     <span className="text-[10px] text-ink-quiet px-1">+{dayJobs.length - 3} more</span>
                   )}
@@ -265,18 +307,15 @@ export function SchedulePage() {
                 <p className="text-[11px] text-ink-quiet mt-0.5">{unassigned.length} job{unassigned.length > 1 ? "s" : ""}</p>
               </div>
               <div className="divide-y divide-paper-deep">
-                {unassigned.map((job) => {
-                  const customer = getCustomer(job.customerId);
-                  return (
-                    <Link key={job.id} to={`/jobs/${job.id}`} className="block px-4 py-3 hover:bg-paper-warm transition-colors">
-                      <p className="text-[12px] font-semibold text-ink truncate">{customer?.name}</p>
-                      <p className="text-[11px] text-ink-quiet truncate">{job.title}</p>
-                      {job.scheduledDate && (
-                        <p className="text-[11px] text-ink-quiet mt-0.5">{job.scheduledDate}</p>
-                      )}
-                    </Link>
-                  );
-                })}
+                {unassigned.map((job) => (
+                  <Link key={job.id} to={`/jobs/${job.id}`} className="block px-4 py-3 hover:bg-paper-warm transition-colors">
+                    <p className="text-[12px] font-semibold text-ink truncate">{getCustomerName(job.customerId)}</p>
+                    <p className="text-[11px] text-ink-quiet truncate">{job.title}</p>
+                    {job.scheduledDate && (
+                      <p className="text-[11px] text-ink-quiet mt-0.5">{job.scheduledDate}</p>
+                    )}
+                  </Link>
+                ))}
               </div>
             </div>
           </div>
@@ -345,30 +384,25 @@ export function SchedulePage() {
 
                   {/* Job slots */}
                   <div className="flex-1 px-3 py-1.5 flex flex-col gap-1.5">
-                    {jobsThisHour.map((job) => {
-                      const customer = getCustomer(job.customerId);
-                      const crew = job.assignedTo ? getCrewMember(job.assignedTo) : null;
-                      return (
-                        <Link
-                          key={job.id}
-                          to={`/jobs/${job.id}`}
-                          className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-[12px] font-medium hover:shadow-sm transition-shadow ${
-                            SERVICE_COLORS[job.serviceType] ?? SERVICE_COLORS.custom
-                          }`}
-                        >
-                          <Clock className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold truncate">{job.title}</p>
-                            <p className="opacity-70 text-[11px] truncate">
-                              {customer?.name}
-                              {crew ? ` · ${crew.name}` : ""}
-                              {job.durationMinutes ? ` · ${job.durationMinutes}min` : ""}
-                            </p>
-                          </div>
-                          <span className="text-[11px] opacity-60 flex-shrink-0">{serviceTypeLabel(job.serviceType)}</span>
-                        </Link>
-                      );
-                    })}
+                    {jobsThisHour.map((job) => (
+                      <Link
+                        key={job.id}
+                        to={`/jobs/${job.id}`}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-[12px] font-medium hover:shadow-sm transition-shadow ${
+                          SERVICE_COLORS[job.serviceType] ?? SERVICE_COLORS.custom
+                        }`}
+                      >
+                        <Clock className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate">{job.title}</p>
+                          <p className="opacity-70 text-[11px] truncate">
+                            {getCustomerName(job.customerId)}
+                            {job.durationMinutes ? ` · ${job.durationMinutes}min` : ""}
+                          </p>
+                        </div>
+                        <span className="text-[11px] opacity-60 flex-shrink-0">{serviceTypeLabel(job.serviceType)}</span>
+                      </Link>
+                    ))}
                   </div>
                 </div>
               );

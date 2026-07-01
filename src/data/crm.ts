@@ -45,6 +45,8 @@ export interface Estimate {
   sentAt: string | null;
   expiresAt: string | null;
   total: number;
+  followUpDays: number;
+  followUpSentAt: string | null;
 }
 
 export interface Invoice {

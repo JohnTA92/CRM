@@ -4,7 +4,8 @@ import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { estimateStatusLabel } from "@/data/crm";
-import { ArrowLeft, Send, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
+import { buildEstimateEmail, sendEmail } from "@/lib/email";
+import { ArrowLeft, Send, ThumbsUp, ThumbsDown, Loader2, Mail, X, CheckCircle2, AlertCircle } from "lucide-react";
 
 function estStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" {
   const m: Record<string, "warning" | "success" | "error" | "muted" | "default"> = {
@@ -20,6 +21,11 @@ export function EstimateDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [sendTo, setSendTo] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
+
   useEffect(() => { if (id) load(id); }, [id]);
 
   async function load(estId: string) {
@@ -28,13 +34,45 @@ export function EstimateDetailPage() {
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setEstimate(data);
     const { data: cust } = await supabase.from("customers").select("*").eq("id", data.customer_id).single();
-    if (cust) setCustomer(cust);
+    if (cust) {
+      setCustomer(cust);
+      setSendTo(cust.email ?? "");
+    }
     setLoading(false);
   }
 
   async function updateStatus(status: string) {
-    const { data } = await supabase.from("estimates").update({ status }).eq("id", estimate.id).select().single();
+    const updates: any = { status };
+    if (status === "sent") updates.sent_at = new Date().toISOString();
+    const { data } = await supabase.from("estimates").update(updates).eq("id", estimate.id).select().single();
     if (data) setEstimate(data);
+  }
+
+  async function handleSend() {
+    if (!sendTo.trim()) return;
+    setSending(true);
+    setSendResult(null);
+
+    const { subject, html } = buildEstimateEmail({
+      to: sendTo,
+      customerName: customer?.name ?? "Customer",
+      estimateId: estimate.id,
+      lineItems: lineItems,
+      total: subtotal,
+      notes: estimate.notes,
+      createdAt: estimate.created_at?.split("T")[0],
+    });
+
+    const result = await sendEmail({ to: sendTo, subject, html, type: "estimate", recordId: estimate.id });
+
+    if (result.success) {
+      await updateStatus("sent");
+      setSendResult({ success: true, message: `Estimate sent to ${sendTo}` });
+      setTimeout(() => { setShowSendModal(false); setSendResult(null); }, 2000);
+    } else {
+      setSendResult({ success: false, message: result.error ?? "Failed to send email" });
+    }
+    setSending(false);
   }
 
   if (loading) return (
@@ -105,9 +143,9 @@ export function EstimateDetailPage() {
       )}
 
       <div className="flex gap-2">
-        {estimate.status === "draft" && (
-          <Button size="sm" className="w-auto gap-1.5" onClick={() => updateStatus("sent")}>
-            <Send className="w-3.5 h-3.5" /> Send to Customer
+        {(estimate.status === "draft" || estimate.status === "sent") && (
+          <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowSendModal(true)}>
+            <Mail className="w-3.5 h-3.5" /> Email to Customer
           </Button>
         )}
         {estimate.status === "sent" && (
@@ -122,6 +160,99 @@ export function EstimateDetailPage() {
         )}
         <Button size="sm" variant={estimate.status === "draft" ? "secondary" : "ghost"} className="w-auto">Edit</Button>
       </div>
+
+      {/* Send modal */}
+      {showSendModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-paper-deep">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[#dcfce7] flex items-center justify-center">
+                  <Send className="w-4 h-4 text-[#16a34a]" />
+                </div>
+                <h2 className="text-[15px] font-semibold text-ink">Send Estimate</h2>
+              </div>
+              <button onClick={() => { setShowSendModal(false); setSendResult(null); }} className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              {/* Summary card */}
+              <div className="bg-paper-warm rounded-xl border border-paper-deep p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[13px] font-semibold text-ink">{customer?.name}</p>
+                    <p className="text-[12px] text-ink-quiet mt-0.5">{lineItems.length} line item{lineItems.length !== 1 ? "s" : ""}</p>
+                  </div>
+                  <p className="text-[20px] font-bold text-ink">${subtotal.toFixed(2)}</p>
+                </div>
+              </div>
+
+              {/* Email field */}
+              <div>
+                <label className="block text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-1.5">
+                  Send to
+                </label>
+                <input
+                  type="email"
+                  value={sendTo}
+                  onChange={(e) => setSendTo(e.target.value)}
+                  placeholder="customer@email.com"
+                  className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                />
+                {!customer?.email && (
+                  <p className="text-[12px] text-amber-600 mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    No email on file for this customer — enter one above
+                  </p>
+                )}
+              </div>
+
+              {/* What gets sent */}
+              <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-xl p-4">
+                <p className="text-[12px] font-semibold text-[#15803d] mb-2">What the customer receives</p>
+                <ul className="space-y-1.5">
+                  {["Professional HTML email with all line items", "Itemized pricing and grand total", "Any notes you've added", "Your business name in the sender line"].map((item) => (
+                    <li key={item} className="flex items-center gap-2 text-[12px] text-[#166534]">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-[#16a34a] flex-shrink-0" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {sendResult && (
+                <div className={`flex items-center gap-2 px-4 py-3 rounded-xl text-[13px] font-medium ${
+                  sendResult.success
+                    ? "bg-[#dcfce7] text-[#15803d] border border-[#bbf7d0]"
+                    : "bg-[#fef2f2] text-[#dc2626] border border-[#fecaca]"
+                }`}>
+                  {sendResult.success
+                    ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+                  {sendResult.message}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-paper-deep flex gap-2 justify-end">
+              <Button variant="secondary" size="sm" className="w-auto" onClick={() => { setShowSendModal(false); setSendResult(null); }}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="w-auto gap-1.5"
+                onClick={handleSend}
+                disabled={sending || !sendTo.trim()}
+              >
+                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                {sending ? "Sending…" : "Send Estimate"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { InvoiceDetailPage } from "@/pages/crm/InvoiceDetailPage";
 import { SettingsPage } from "@/pages/crm/SettingsPage";
 import { ExpensesPage } from "@/pages/crm/ExpensesPage";
 import { ServicesPage } from "@/pages/crm/ServicesPage";
+import { MediaPage } from "@/pages/crm/MediaPage";
 
 function NotFound() {
   return (
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/services" element={<ServicesPage />} />
+            <Route path="/media" element={<MediaPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

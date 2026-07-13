@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
+import { MediaModal } from "./MediaModal";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
@@ -8,7 +9,7 @@ import { useServices, serviceLabel } from "@/lib/services";
 import {
   ArrowLeft, Clock, Repeat, StickyNote, FileText, Receipt,
   CheckCircle2, Loader2, X, ChevronDown, RefreshCw, Trash2,
-  DollarSign, TrendingUp, Zap,
+  DollarSign, TrendingUp, Zap, Camera, Upload, Play,
 } from "lucide-react";
 
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
@@ -48,7 +49,12 @@ export function JobDetailPage() {
   const [estimate, setEstimate] = useState<any>(null);
   const [invoice, setInvoice] = useState<any>(null);
   const [jobExpenses, setJobExpenses] = useState<any[]>([]);
+  const [jobMedia, setJobMedia] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
   const [notFound, setNotFound] = useState(false);
   const [convertingInvoice, setConvertingInvoice] = useState(false);
 
@@ -103,17 +109,19 @@ export function JobDetailPage() {
     };
     setJob(mapped);
 
-    const [custRes, estRes, invRes, expRes] = await Promise.all([
+    const [custRes, estRes, invRes, expRes, mediaRes] = await Promise.all([
       supabase.from("customers").select("*").eq("id", row.customer_id).single(),
       row.estimate_id ? supabase.from("estimates").select("*").eq("id", row.estimate_id).single() : Promise.resolve({ data: null }),
       row.invoice_id ? supabase.from("invoices").select("*").eq("id", row.invoice_id).single() : Promise.resolve({ data: null }),
       supabase.from("expenses").select("*").eq("job_id", jobId),
+      supabase.from("job_media").select("*").eq("job_id", jobId).order("created_at", { ascending: true }),
     ]);
 
     if (custRes.data) setCustomer(custRes.data);
     if (estRes.data) setEstimate(estRes.data);
     if (invRes.data) setInvoice(invRes.data);
     if (expRes.data) setJobExpenses(expRes.data);
+    if (mediaRes.data) setJobMedia(mediaRes.data);
     setLoading(false);
   }
 
@@ -149,6 +157,53 @@ export function JobDetailPage() {
     setJob((prev: any) => ({ ...prev, invoiceId: data.id, status: "invoiced" }));
     setConvertingInvoice(false);
     navigate(`/invoices/${data.id}`);
+  }
+
+  async function handleQuickMediaUpload(e: React.ChangeEvent<HTMLInputElement>, tag: "before" | "after") {
+    if (!e.target.files || !job) return;
+    const files = Array.from(e.target.files);
+    setMediaUploading(true);
+    setMediaError(null);
+
+    for (const file of files) {
+      const ext = file.name.split(".").pop();
+      const path = `${job.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+      const { error: storageErr } = await supabase.storage
+        .from("job-media")
+        .upload(path, file, { contentType: file.type });
+
+      if (storageErr) {
+        setMediaError(`Storage error: ${storageErr.message} — make sure the "job-media" bucket exists in Supabase Storage and is set to Public.`);
+        setMediaUploading(false);
+        e.target.value = "";
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from("job-media").getPublicUrl(path);
+
+      const { error: dbErr } = await supabase.from("job_media").insert({
+        job_id: job.id,
+        customer_id: job.customerId,
+        tag,
+        url: urlData.publicUrl,
+        file_name: file.name,
+        file_type: file.type,
+        notes: null,
+      });
+
+      if (dbErr) {
+        setMediaError(`Database error: ${dbErr.message} — make sure the "job_media" table exists in Supabase.`);
+        setMediaUploading(false);
+        e.target.value = "";
+        return;
+      }
+    }
+
+    const { data } = await supabase.from("job_media").select("*").eq("job_id", job.id).order("created_at", { ascending: true });
+    if (data) setJobMedia(data);
+    setMediaUploading(false);
+    e.target.value = "";
   }
 
   async function handleDelete() {
@@ -518,6 +573,84 @@ export function JobDetailPage() {
           )}
         </div>
       </div>
+
+      {/* ── Job Media button ── */}
+      {(() => {
+        const beforeCount = jobMedia.filter((m) => m.tag === "before").length;
+        const afterCount = jobMedia.filter((m) => m.tag === "after").length;
+        const totalCount = jobMedia.length;
+        return (
+          <div className="flex items-center gap-2 mb-5">
+            <button
+              onClick={() => setLightboxIdx(0)}
+              className="flex items-center gap-2.5 px-4 py-2.5 bg-white border border-paper-deep rounded-xl hover:border-ink/20 hover:shadow-sm transition-all group"
+            >
+              {/* Thumbnail stack preview */}
+              {totalCount > 0 ? (
+                <div className="flex -space-x-2">
+                  {jobMedia.slice(0, 3).map((m, i) => (
+                    <div key={m.id} className="w-8 h-8 rounded-lg overflow-hidden border-2 border-white flex-shrink-0" style={{ zIndex: 3 - i }}>
+                      {m.file_type?.startsWith("video/")
+                        ? <div className="w-full h-full bg-paper-dark flex items-center justify-center"><Play className="w-3 h-3 text-ink-quiet" /></div>
+                        : <img src={m.url} alt="" className="w-full h-full object-cover" />}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="w-8 h-8 rounded-lg bg-paper-dark flex items-center justify-center">
+                  <Camera className="w-4 h-4 text-ink-quiet" />
+                </div>
+              )}
+              <div className="text-left">
+                <p className="text-[13px] font-semibold text-ink group-hover:text-accent transition-colors">
+                  {totalCount === 0 ? "Before & After Photos" : `${totalCount} Photo${totalCount !== 1 ? "s" : ""}`}
+                </p>
+                <p className="text-[11px] text-ink-quiet">
+                  {totalCount === 0
+                    ? "None added yet"
+                    : `${beforeCount} before · ${afterCount} after`}
+                </p>
+              </div>
+              <Camera className="w-4 h-4 text-ink-quiet ml-1 group-hover:text-accent transition-colors" />
+            </button>
+
+            {/* Upload buttons always visible */}
+            {mediaUploading && <Loader2 className="w-4 h-4 animate-spin text-ink-quiet" />}
+            <label className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold cursor-pointer bg-[#fff3e0] text-[#e65100] hover:bg-[#ffe0b2] transition-colors border border-[#ffcc80]">
+              <input type="file" accept="image/*,video/*" multiple capture="environment" className="hidden"
+                onChange={(e) => handleQuickMediaUpload(e, "before")} />
+              + Before
+            </label>
+            <label className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold cursor-pointer bg-[#e8f5e9] text-[#2e7d32] hover:bg-[#c8e6c9] transition-colors border border-[#a5d6a7]">
+              <input type="file" accept="image/*,video/*" multiple capture="environment" className="hidden"
+                onChange={(e) => handleQuickMediaUpload(e, "after")} />
+              + After
+            </label>
+          </div>
+        );
+      })()}
+
+      {mediaError && (
+        <div className="mb-5 bg-[#fef2f2] border border-[#fecaca] rounded-xl px-4 py-3 text-[13px] text-[#dc2626] flex items-start gap-2">
+          <span className="flex-1">{mediaError}</span>
+          <button onClick={() => setMediaError(null)} className="text-[#dc2626]/60 hover:text-[#dc2626] flex-shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Media modal */}
+      {lightboxIdx !== null && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setLightboxIdx(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <MediaModal
+              media={jobMedia}
+              initialIdx={lightboxIdx}
+              onClose={() => setLightboxIdx(null)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">

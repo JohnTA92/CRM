@@ -12,6 +12,7 @@ import {
   Leaf,
   Wallet,
   Wrench,
+  Camera,
 } from "lucide-react";
 
 const navItems = [
@@ -23,6 +24,7 @@ const navItems = [
   { to: "/invoices", icon: Receipt, label: "Invoices" },
   { to: "/expenses", icon: Wallet, label: "Expenses" },
   { to: "/services", icon: Wrench, label: "Services" },
+  { to: "/media", icon: Camera, label: "Job Media" },
 ];
 
 export function Sidebar() {

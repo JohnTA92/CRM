@@ -80,6 +80,7 @@ export function JobsPage() {
   const [scheduledTime, setScheduledTime] = useState("");
   const [recurring, setRecurring] = useState<"none" | "weekly" | "biweekly" | "monthly">("none");
   const [notes, setNotes] = useState("");
+  const [price, setPrice] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -141,6 +142,7 @@ export function JobsPage() {
         duration_minutes: 60,
         assigned_to: null,
         notes: notes.trim() || null,
+        price: price ? parseFloat(price) : null,
         estimate_id: null,
         invoice_id: null,
         recurring,
@@ -159,7 +161,7 @@ export function JobsPage() {
   const resetForm = () => {
     setCustomerId(""); setServiceType(services[0]?.value ?? ""); setTitle("");
     setScheduledDate(""); setScheduledTime(""); setRecurring("none");
-    setNotes(""); setErrors({});
+    setNotes(""); setPrice(""); setErrors({});
   };
 
   const getCustomerName = (id: string) => customers.find((c) => c.id === id)?.name ?? "Unknown";
@@ -244,7 +246,10 @@ export function JobsPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {(job as any).price != null && (
+                    <span className="text-[14px] font-semibold text-ink">${Number((job as any).price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  )}
                   {job.recurring !== "none" && (
                     <span className="flex items-center gap-1 text-[11px] text-ink-quiet bg-paper-warm border border-paper-deep rounded-full px-2 py-0.5">
                       <RefreshCw className="w-3 h-3" />
@@ -296,6 +301,8 @@ export function JobsPage() {
               </div>
 
               <Field label="Job Title" value={title} onChange={setTitle} placeholder="e.g. Weekly Lawn Mow" required error={errors.title} />
+
+              <Field label="Job Price ($)" value={price} onChange={setPrice} placeholder="0.00" type="number" />
 
               {/* Service type */}
               <div>

@@ -79,6 +79,7 @@ export function JobDetailPage() {
   const [editRecurring, setEditRecurring] = useState("none");
   const [editStatus, setEditStatus] = useState("scheduled");
   const [editNotes, setEditNotes] = useState("");
+  const [editPrice, setEditPrice] = useState("");
 
   useEffect(() => {
     if (id) loadJob(id);
@@ -105,6 +106,7 @@ export function JobDetailPage() {
       estimateId: row.estimate_id,
       invoiceId: row.invoice_id,
       recurring: row.recurring ?? "none",
+      price: row.price ?? null,
       createdAt: row.created_at?.split("T")[0] ?? "",
     };
     setJob(mapped);
@@ -223,6 +225,7 @@ export function JobDetailPage() {
     setEditRecurring(job.recurring ?? "none");
     setEditStatus(job.status);
     setEditNotes(job.notes ?? "");
+    setEditPrice(job.price != null ? String(job.price) : "");
     setSaveError(null);
     setEditErrors({});
     setShowEdit(true);
@@ -253,6 +256,7 @@ export function JobDetailPage() {
         recurring: editRecurring,
         status: editStatus,
         notes: editNotes.trim() || null,
+        price: editPrice ? parseFloat(editPrice) : null,
       })
       .eq("id", job.id)
       .select()
@@ -276,6 +280,7 @@ export function JobDetailPage() {
         estimateId: row.estimate_id,
         invoiceId: row.invoice_id,
         recurring: row.recurring ?? "none",
+        price: row.price ?? null,
         createdAt: row.created_at?.split("T")[0] ?? "",
       };
       setJob(updated);
@@ -328,7 +333,12 @@ export function JobDetailPage() {
           <h1 className="text-[20px] font-semibold text-ink">{job.title}</h1>
           <p className="text-[13px] text-ink-quiet mt-1">{serviceLabel(job.serviceType, services)}</p>
         </div>
-        <Badge variant={jobStatusBadge(job.status)} className="mt-1">{jobStatusLabel(job.status)}</Badge>
+        <div className="flex items-center gap-3">
+          {job.price != null && (
+            <span className="text-[20px] font-bold text-ink">${Number(job.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          )}
+          <Badge variant={jobStatusBadge(job.status)} className="mt-1">{jobStatusLabel(job.status)}</Badge>
+        </div>
       </div>
 
       {/* Progress tracker */}
@@ -743,6 +753,13 @@ export function JobDetailPage() {
                     editErrors.title ? "border-accent" : "border-paper-deep focus:border-ink"
                   }`} />
                 {editErrors.title && <p className="text-[11px] text-accent mt-1">{editErrors.title}</p>}
+              </div>
+
+              {/* Price */}
+              <div>
+                <label className="block text-[12px] font-semibold text-ink-quiet mb-1.5">Job Price ($)</label>
+                <input type="number" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} placeholder="0.00" min="0" step="0.01"
+                  className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors" />
               </div>
 
               {/* Service type */}

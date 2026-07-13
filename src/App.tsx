@@ -16,6 +16,8 @@ import { ExpensesPage } from "@/pages/crm/ExpensesPage";
 import { ServicesPage } from "@/pages/crm/ServicesPage";
 import { MediaPage } from "@/pages/crm/MediaPage";
 
+import { RoutePage } from "@/pages/crm/RoutePage";
+
 function NotFound() {
   return (
     <div className="flex items-center justify-center h-64 text-ink-quiet text-[14px]">
@@ -45,6 +47,7 @@ export default function App() {
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/services" element={<ServicesPage />} />
             <Route path="/media" element={<MediaPage />} />
+            <Route path="/routes" element={<RoutePage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -5,7 +5,7 @@ import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { jobStatusLabel, invoiceStatusLabel, estimateStatusLabel } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
-import { ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt, Loader2, Clock, CheckCircle2, AlertCircle, Send } from "lucide-react";
+import { ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt, Loader2, Clock, CheckCircle2, AlertCircle, Send, Pencil, X } from "lucide-react";
 
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
   const m: Record<string, "warning" | "success" | "error" | "muted" | "default" | "gold"> = {
@@ -27,6 +27,23 @@ function estStatusBadge(s: string): "warning" | "success" | "error" | "muted" | 
   return m[s] ?? "default";
 }
 
+function Field({ label, value, onChange, placeholder, type = "text" }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-[12px] font-semibold text-ink-quiet mb-1">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full px-3 py-2 text-[13px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors"
+      />
+    </div>
+  );
+}
+
 export function CustomerDetailPage() {
   const { services } = useServices();
   const { id } = useParams<{ id: string }>();
@@ -36,6 +53,12 @@ export function CustomerDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+
+  // Edit state
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => { if (id) load(id); }, [id]);
 
@@ -55,6 +78,48 @@ export function CustomerDetailPage() {
     if (invRes.data) setInvoices(invRes.data);
     setLoading(false);
   }
+
+  function openEdit() {
+    setEditForm({
+      name: customer.name ?? "",
+      phone: customer.phone ?? "",
+      email: customer.email ?? "",
+      address: customer.address ?? "",
+      city: customer.city ?? "",
+      state: customer.state ?? "",
+      zip: customer.zip ?? "",
+      notes: customer.notes ?? "",
+    });
+    setSaveError(null);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    if (!editForm.name?.trim()) { setSaveError("Name is required."); return; }
+    setSaving(true);
+    setSaveError(null);
+    const { data, error } = await supabase
+      .from("customers")
+      .update({
+        name: editForm.name.trim(),
+        phone: editForm.phone.trim() || null,
+        email: editForm.email.trim() || null,
+        address: editForm.address.trim() || null,
+        city: editForm.city.trim() || null,
+        state: editForm.state.trim() || null,
+        zip: editForm.zip.trim() || null,
+        notes: editForm.notes.trim() || null,
+      })
+      .eq("id", customer.id)
+      .select()
+      .single();
+    setSaving(false);
+    if (error) { setSaveError(error.message); return; }
+    setCustomer(data);
+    setEditing(false);
+  }
+
+  const set = (field: string) => (value: string) => setEditForm((f: any) => ({ ...f, [field]: value }));
 
   if (loading) return (
     <div className="p-8 flex items-center gap-2 text-ink-quiet">
@@ -113,9 +178,14 @@ export function CustomerDetailPage() {
               </div>
             )}
           </div>
-          <div className="text-right flex-shrink-0">
-            <p className="text-[22px] font-semibold text-ink">${totalSpend.toLocaleString()}</p>
-            <p className="text-[12px] text-ink-quiet">total spend</p>
+          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <div className="text-right">
+              <p className="text-[22px] font-semibold text-ink">${totalSpend.toLocaleString()}</p>
+              <p className="text-[12px] text-ink-quiet">total spend</p>
+            </div>
+            <Button size="sm" variant="secondary" className="w-auto gap-1.5" onClick={openEdit}>
+              <Pencil className="w-3.5 h-3.5" /> Edit
+            </Button>
           </div>
         </div>
         {customer.notes && (
@@ -129,6 +199,57 @@ export function CustomerDetailPage() {
           <Button size="sm" variant="secondary" className="w-auto gap-1.5"><FileText className="w-3.5 h-3.5" /> New Estimate</Button>
         </div>
       </div>
+
+      {/* Edit modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setEditing(false)} />
+          <div className="relative bg-white rounded-2xl shadow-[var(--shadow-modal)] w-full max-w-md flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-paper-deep">
+              <h2 className="text-[16px] font-semibold text-ink">Edit Customer</h2>
+              <button onClick={() => setEditing(false)} className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+              <Field label="Full Name" value={editForm.name} onChange={set("name")} placeholder="Jane Smith" />
+              <Field label="Phone" value={editForm.phone} onChange={set("phone")} placeholder="555-000-0000" type="tel" />
+              <Field label="Email" value={editForm.email} onChange={set("email")} placeholder="jane@email.com" type="email" />
+              <Field label="Street Address" value={editForm.address} onChange={set("address")} placeholder="123 Main St" />
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-1">
+                  <Field label="City" value={editForm.city} onChange={set("city")} placeholder="Austin" />
+                </div>
+                <Field label="State" value={editForm.state} onChange={set("state")} placeholder="TX" />
+                <Field label="ZIP" value={editForm.zip} onChange={set("zip")} placeholder="78701" />
+              </div>
+              <div>
+                <label className="block text-[12px] font-semibold text-ink-quiet mb-1">Notes</label>
+                <textarea
+                  value={editForm.notes}
+                  onChange={(e) => set("notes")(e.target.value)}
+                  placeholder="Any notes about this customer…"
+                  rows={3}
+                  className="w-full px-3 py-2 text-[13px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors resize-none"
+                />
+              </div>
+              {saveError && (
+                <div className="bg-[#ffebee] border border-[#ef9a9a] rounded-lg px-4 py-3 text-[13px] text-[#b71c1c]">
+                  {saveError}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 px-6 py-4 border-t border-paper-deep">
+              <Button variant="secondary" className="w-auto flex-1" onClick={() => setEditing(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button className="flex-1" onClick={handleSave} loading={saving}>
+                Save Changes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="mb-6">
         <h2 className="text-[15px] font-semibold text-ink mb-3 flex items-center gap-2">
@@ -171,7 +292,6 @@ export function CustomerDetailPage() {
         </div>
       </section>
 
-      {/* ── Communication Timeline ── */}
       {(() => {
         type TimelineEvent = { date: string; label: string; sub: string; icon: React.ElementType; color: string; link: string };
         const events: TimelineEvent[] = [];
@@ -189,10 +309,8 @@ export function CustomerDetailPage() {
           if (i.paid_at) events.push({ date: i.paid_at.split("T")[0], label: "Payment received", sub: `$${Number(i.total).toLocaleString()}`, icon: CheckCircle2, color: "bg-[#e8f5e9] text-[#2e7d32]", link: `/invoices/${i.id}` });
           if (i.status === "overdue") events.push({ date: i.due_at ?? i.created_at?.split("T")[0] ?? "", label: "Invoice overdue", sub: `$${Number(i.total).toLocaleString()} unpaid`, icon: AlertCircle, color: "bg-[#ffebee] text-[#c62828]", link: `/invoices/${i.id}` });
         });
-
         const sorted = events.filter((e) => e.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12);
         if (sorted.length === 0) return null;
-
         return (
           <section className="mb-6">
             <h2 className="text-[15px] font-semibold text-ink mb-3 flex items-center gap-2">

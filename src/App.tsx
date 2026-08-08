@@ -18,6 +18,7 @@ import { MediaPage } from "@/pages/crm/MediaPage";
 import { RoutePage } from "@/pages/crm/RoutePage";
 import { CrewPage } from "@/pages/crm/CrewPage";
 import { CustomerPortalPage } from "@/pages/portal/CustomerPortalPage";
+import { CrewPortalPage } from "@/pages/portal/CrewPortalPage";
 
 function NotFound() {
   return (
@@ -62,6 +63,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/portal/:customerId" element={<CustomerPortalPage />} />
+          <Route path="/crew-portal/:crewId" element={<CrewPortalPage />} />
           <Route path="/*" element={<AppLayout />} />
         </Routes>
       </BrowserRouter>

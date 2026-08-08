@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/design-system/primitives/Button";
-import { Users, Plus, X, Phone, Mail, Pencil, Loader2, User, CheckCircle2 } from "lucide-react";
+import { Users, Plus, X, Phone, Mail, Pencil, Loader2, User, CheckCircle2, Link2 } from "lucide-react";
 
 type CrewMember = {
   id: string;
@@ -36,6 +36,15 @@ export function CrewPage() {
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  function copyPortalLink(m: CrewMember) {
+    const url = `${window.location.origin}/crew-portal/${m.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedId(m.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
+  }
 
   useEffect(() => { load(); }, []);
 
@@ -146,6 +155,14 @@ export function CrewPage() {
                       {m.role}
                     </span>
                     <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => copyPortalLink(m)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-paper-warm text-ink-quiet transition-colors text-[11px] font-medium"
+                        title="Copy portal link"
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        {copiedId === m.id ? "Copied!" : "Portal"}
+                      </button>
                       <button onClick={() => openEdit(m)} className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet transition-colors">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>

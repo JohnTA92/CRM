@@ -15,8 +15,9 @@ import { SettingsPage } from "@/pages/crm/SettingsPage";
 import { ExpensesPage } from "@/pages/crm/ExpensesPage";
 import { ServicesPage } from "@/pages/crm/ServicesPage";
 import { MediaPage } from "@/pages/crm/MediaPage";
-
 import { RoutePage } from "@/pages/crm/RoutePage";
+import { CrewPage } from "@/pages/crm/CrewPage";
+import { CustomerPortalPage } from "@/pages/portal/CustomerPortalPage";
 
 function NotFound() {
   return (
@@ -26,34 +27,44 @@ function NotFound() {
   );
 }
 
+function AppLayout() {
+  return (
+    <div className="flex min-h-screen bg-paper-warm">
+      <Sidebar />
+      <main className="ml-56 flex-1 min-w-0">
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/customers" element={<CustomersPage />} />
+          <Route path="/customers/:id" element={<CustomerDetailPage />} />
+          <Route path="/jobs" element={<JobsPage />} />
+          <Route path="/jobs/:id" element={<JobDetailPage />} />
+          <Route path="/schedule" element={<SchedulePage />} />
+          <Route path="/estimates" element={<EstimatesPage />} />
+          <Route path="/estimates/:id" element={<EstimateDetailPage />} />
+          <Route path="/invoices" element={<InvoicesPage />} />
+          <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
+          <Route path="/expenses" element={<ExpensesPage />} />
+          <Route path="/services" element={<ServicesPage />} />
+          <Route path="/media" element={<MediaPage />} />
+          <Route path="/routes" element={<RoutePage />} />
+          <Route path="/crew" element={<CrewPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <ThemeProvider>
-    <BrowserRouter>
-      <div className="flex min-h-screen bg-paper-warm">
-        <Sidebar />
-        <main className="ml-56 flex-1 min-w-0">
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/customers" element={<CustomersPage />} />
-            <Route path="/customers/:id" element={<CustomerDetailPage />} />
-            <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/jobs/:id" element={<JobDetailPage />} />
-            <Route path="/schedule" element={<SchedulePage />} />
-            <Route path="/estimates" element={<EstimatesPage />} />
-            <Route path="/estimates/:id" element={<EstimateDetailPage />} />
-            <Route path="/invoices" element={<InvoicesPage />} />
-            <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
-            <Route path="/expenses" element={<ExpensesPage />} />
-            <Route path="/services" element={<ServicesPage />} />
-            <Route path="/media" element={<MediaPage />} />
-            <Route path="/routes" element={<RoutePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </main>
-      </div>
-    </BrowserRouter>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/portal/:customerId" element={<CustomerPortalPage />} />
+          <Route path="/*" element={<AppLayout />} />
+        </Routes>
+      </BrowserRouter>
     </ThemeProvider>
   );
 }

@@ -9,7 +9,7 @@ import { useServices, serviceLabel } from "@/lib/services";
 import {
   ArrowLeft, Clock, Repeat, StickyNote, FileText, Receipt,
   CheckCircle2, Loader2, X, ChevronDown, RefreshCw, Trash2,
-  DollarSign, TrendingUp, Zap, Camera, Upload, Play,
+  DollarSign, TrendingUp, Zap, Camera, Play, Plus, ListChecks,
 } from "lucide-react";
 
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
@@ -70,6 +70,38 @@ export function JobDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
+  // checklist
+  const [checklist, setChecklist] = useState<{ id: string; text: string; done: boolean }[]>([]);
+  const [newTaskText, setNewTaskText] = useState("");
+  const [checklistSaving, setChecklistSaving] = useState(false);
+
+  async function saveChecklist(updated: { id: string; text: string; done: boolean }[]) {
+    setChecklistSaving(true);
+    await supabase.from("jobs").update({ checklist: updated }).eq("id", job?.id ?? "");
+    setChecklistSaving(false);
+  }
+
+  async function addChecklistTask() {
+    if (!newTaskText.trim()) return;
+    const item = { id: crypto.randomUUID(), text: newTaskText.trim(), done: false };
+    const updated = [...checklist, item];
+    setChecklist(updated);
+    setNewTaskText("");
+    await saveChecklist(updated);
+  }
+
+  async function toggleChecklistItem(itemId: string) {
+    const updated = checklist.map((i) => i.id === itemId ? { ...i, done: !i.done } : i);
+    setChecklist(updated);
+    await saveChecklist(updated);
+  }
+
+  async function removeChecklistItem(itemId: string) {
+    const updated = checklist.filter((i) => i.id !== itemId);
+    setChecklist(updated);
+    await saveChecklist(updated);
+  }
+
   // edit form fields
   const [editCustomerId, setEditCustomerId] = useState("");
   const [editTitle, setEditTitle] = useState("");
@@ -110,6 +142,7 @@ export function JobDetailPage() {
       createdAt: row.created_at?.split("T")[0] ?? "",
     };
     setJob(mapped);
+    setChecklist(Array.isArray(row.checklist) ? row.checklist : []);
 
     const [custRes, estRes, invRes, expRes, mediaRes] = await Promise.all([
       supabase.from("customers").select("*").eq("id", row.customer_id).single(),
@@ -581,6 +614,65 @@ export function JobDetailPage() {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ── Checklist ── */}
+      <div className="bg-white rounded-xl border border-paper-deep mb-5 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3.5 bg-paper-warm border-b border-paper-deep">
+          <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide flex items-center gap-1.5">
+            <ListChecks className="w-3.5 h-3.5" /> Checklist
+            {checklist.length > 0 && (
+              <span className="ml-1 text-[11px] text-ink-quiet font-normal">
+                {checklist.filter((i) => i.done).length}/{checklist.length}
+              </span>
+            )}
+          </p>
+          {checklistSaving && <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-quiet" />}
+        </div>
+        <div className="px-5 py-4">
+          {checklist.length > 0 && (
+            <div className="space-y-1.5 mb-4">
+              {checklist.map((item) => (
+                <div key={item.id} className="flex items-center gap-3 group">
+                  <button
+                    onClick={() => toggleChecklistItem(item.id)}
+                    className={`w-4.5 h-4.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+                      item.done ? "bg-moss border-moss text-white" : "border-paper-deep bg-white hover:border-ink/30"
+                    }`}
+                  >
+                    {item.done && <CheckCircle2 className="w-3 h-3" />}
+                  </button>
+                  <span className={`flex-1 text-[13px] transition-colors ${item.done ? "line-through text-ink-quiet" : "text-ink"}`}>
+                    {item.text}
+                  </span>
+                  <button
+                    onClick={() => removeChecklistItem(item.id)}
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-paper-warm text-ink-quiet transition-all"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newTaskText}
+              onChange={(e) => setNewTaskText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addChecklistTask(); }}
+              placeholder="Add a task…"
+              className="flex-1 px-3 py-2 text-[13px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors"
+            />
+            <button
+              onClick={addChecklistTask}
+              disabled={!newTaskText.trim()}
+              className="px-3 py-2 rounded-lg bg-ink text-white text-[13px] font-medium disabled:opacity-40 hover:bg-ink/90 transition-colors flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
         </div>
       </div>
 

@@ -14,6 +14,7 @@ import {
   Wrench,
   Camera,
   Navigation,
+  HardHat,
 } from "lucide-react";
 
 const navItems = [
@@ -27,6 +28,7 @@ const navItems = [
   { to: "/services", icon: Wrench, label: "Services" },
   { to: "/media", icon: Camera, label: "Job Media" },
   { to: "/routes", icon: Navigation, label: "Routes" },
+  { to: "/crew", icon: HardHat, label: "Crew" },
 ];
 
 export function Sidebar() {

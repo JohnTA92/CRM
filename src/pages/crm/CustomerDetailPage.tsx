@@ -5,7 +5,7 @@ import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { jobStatusLabel, invoiceStatusLabel, estimateStatusLabel } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
-import { ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt, Loader2, Clock, CheckCircle2, AlertCircle, Send, Pencil, X } from "lucide-react";
+import { ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt, Loader2, Clock, CheckCircle2, AlertCircle, Send, Pencil, X, Link2 } from "lucide-react";
 
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
   const m: Record<string, "warning" | "success" | "error" | "muted" | "default" | "gold"> = {
@@ -53,6 +53,16 @@ export function CustomerDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+
+  const [copied, setCopied] = useState(false);
+
+  function copyPortalLink() {
+    const url = `${window.location.origin}/portal/${id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   // Edit state
   const [editing, setEditing] = useState(false);
@@ -194,9 +204,16 @@ export function CustomerDetailPage() {
             <p className="text-[13px] text-ink-soft">{customer.notes}</p>
           </div>
         )}
-        <div className="flex gap-2 mt-4 pt-4 border-t border-paper-deep">
+        <div className="flex gap-2 mt-4 pt-4 border-t border-paper-deep flex-wrap">
           <Button size="sm" className="w-auto gap-1.5"><Plus className="w-3.5 h-3.5" /> New Job</Button>
           <Button size="sm" variant="secondary" className="w-auto gap-1.5"><FileText className="w-3.5 h-3.5" /> New Estimate</Button>
+          <button
+            onClick={copyPortalLink}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-paper-deep bg-white text-ink-soft hover:bg-paper-warm transition-colors"
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            {copied ? "Copied!" : "Portal Link"}
+          </button>
         </div>
       </div>
 

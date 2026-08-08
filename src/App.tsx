@@ -17,6 +17,7 @@ import { ServicesPage } from "@/pages/crm/ServicesPage";
 import { MediaPage } from "@/pages/crm/MediaPage";
 import { RoutePage } from "@/pages/crm/RoutePage";
 import { CrewPage } from "@/pages/crm/CrewPage";
+import { RevenuePage } from "@/pages/crm/RevenuePage";
 import { CustomerPortalPage } from "@/pages/portal/CustomerPortalPage";
 import { CrewPortalPage } from "@/pages/portal/CrewPortalPage";
 
@@ -49,6 +50,7 @@ function AppLayout() {
           <Route path="/media" element={<MediaPage />} />
           <Route path="/routes" element={<RoutePage />} />
           <Route path="/crew" element={<CrewPage />} />
+          <Route path="/revenue" element={<RevenuePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -164,6 +164,29 @@ export function JobDetailPage() {
     if (!job) return;
     await supabase.from("jobs").update({ status: newStatus }).eq("id", job.id);
     setJob((prev: any) => ({ ...prev, status: newStatus }));
+
+    // Auto-create next recurring job when marked complete
+    if (newStatus === "complete" && job.recurring && job.recurring !== "none" && job.scheduledDate) {
+      const base = new Date(job.scheduledDate + "T12:00:00");
+      if (job.recurring === "weekly") base.setDate(base.getDate() + 7);
+      else if (job.recurring === "biweekly") base.setDate(base.getDate() + 14);
+      else if (job.recurring === "monthly") base.setMonth(base.getMonth() + 1);
+      const nextDate = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+      await supabase.from("jobs").insert({
+        customer_id: job.customerId,
+        service_type: job.serviceType,
+        title: job.title,
+        status: "scheduled",
+        scheduled_date: nextDate,
+        scheduled_time: job.scheduledTime ?? null,
+        duration_minutes: job.durationMinutes ?? 60,
+        notes: job.notes || null,
+        price: job.price ?? null,
+        recurring: job.recurring,
+        crew_member_ids: [],
+        checklist: [],
+      });
+    }
   }
 
   async function handleConvertToInvoice() {

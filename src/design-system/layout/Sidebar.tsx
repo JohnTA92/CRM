@@ -15,6 +15,7 @@ import {
   Camera,
   Navigation,
   HardHat,
+  TrendingUp,
 } from "lucide-react";
 
 const navItems = [
@@ -29,6 +30,7 @@ const navItems = [
   { to: "/media", icon: Camera, label: "Job Media" },
   { to: "/routes", icon: Navigation, label: "Routes" },
   { to: "/crew", icon: HardHat, label: "Crew" },
+  { to: "/revenue", icon: TrendingUp, label: "Revenue" },
 ];
 
 export function Sidebar() {

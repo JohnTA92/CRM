@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { Plus, Search, Loader2, X, ChevronDown, Trash2, TriangleAlert, ImagePlus, ZoomIn } from "lucide-react";
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -61,13 +62,16 @@ export function ExpensesPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
+
   useEffect(() => { loadAll(); }, []);
 
   async function loadAll() {
     setLoading(true);
     const [expRes, jobRes] = await Promise.all([
-      supabase.from("expenses").select("*").order("date", { ascending: false }),
-      supabase.from("jobs").select("id, title").order("created_at", { ascending: false }),
+      supabase.from("expenses").select("*").eq("business_id", businessId).order("date", { ascending: false }),
+      supabase.from("jobs").select("id, title").eq("business_id", businessId).order("created_at", { ascending: false }),
     ]);
     if (expRes.data) setExpenses(expRes.data);
     if (jobRes.data) setJobs(jobRes.data);
@@ -121,6 +125,7 @@ export function ExpensesPage() {
 
     // Insert first to get the ID, then upload photo
     const { data, error } = await supabase.from("expenses").insert({
+      business_id: businessId,
       amount: parseFloat(fAmount),
       category: fCategory,
       description: fDescription.trim(),

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
-import { Loader2, CheckCircle2, Clock, FileText, Receipt, Leaf, AlertCircle } from "lucide-react";
+import { createPaymentSession } from "@/lib/stripe";
+import { Loader2, CheckCircle2, Clock, FileText, Receipt, Leaf, AlertCircle, CreditCard, ExternalLink } from "lucide-react";
 
 function statusColor(s: string) {
   const m: Record<string, string> = {
@@ -22,12 +23,19 @@ function statusColor(s: string) {
 
 export function CustomerPortalPage() {
   const { customerId } = useParams<{ customerId: string }>();
+  const [searchParams] = useSearchParams();
   const [customer, setCustomer] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
   const [estimates, setEstimates] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [businessName, setBusinessName] = useState("My Business");
+  const [stripeEnabled, setStripeEnabled] = useState(false);
+  const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null);
+  const [paymentResult, setPaymentResult] = useState<"success" | "cancelled" | null>(
+    (searchParams.get("payment") as "success" | "cancelled" | null)
+  );
 
   useEffect(() => { if (customerId) load(customerId); }, [customerId]);
 
@@ -37,15 +45,28 @@ export function CustomerPortalPage() {
     if (!cust) { setNotFound(true); setLoading(false); return; }
     setCustomer(cust);
 
-    const [jobRes, estRes, invRes] = await Promise.all([
+    const [jobRes, estRes, invRes, settingsRes] = await Promise.all([
       supabase.from("jobs").select("id, title, status, scheduled_date, scheduled_time").eq("customer_id", id).order("scheduled_date", { ascending: false }),
-      supabase.from("estimates").select("id, total, status, created_at, notes").eq("customer_id", id).order("created_at", { ascending: false }),
-      supabase.from("invoices").select("id, total, status, due_at, created_at, notes").eq("customer_id", id).order("created_at", { ascending: false }),
+      supabase.from("estimates").select("id, total, status, created_at, sent_at, notes").eq("customer_id", id).neq("status", "draft").order("created_at", { ascending: false }),
+      supabase.from("invoices").select("id, total, status, due_at, created_at, notes").eq("customer_id", id).neq("status", "voided").order("created_at", { ascending: false }),
+      supabase.from("company_settings").select("business_name, stripe_enabled, stripe_publishable_key").eq("id", "default").single(),
     ]);
     if (jobRes.data) setJobs(jobRes.data);
     if (estRes.data) setEstimates(estRes.data);
     if (invRes.data) setInvoices(invRes.data);
+    if (settingsRes.data?.business_name) setBusinessName(settingsRes.data.business_name);
+    if (settingsRes.data?.stripe_enabled && settingsRes.data?.stripe_publishable_key?.startsWith("pk_")) {
+      setStripeEnabled(true);
+    }
     setLoading(false);
+  }
+
+  async function handlePayOnline(invoiceId: string) {
+    setPayingInvoiceId(invoiceId);
+    const { url, error } = await createPaymentSession(invoiceId);
+    setPayingInvoiceId(null);
+    if (error) { alert(error); return; }
+    if (url) window.location.href = url;
   }
 
   if (loading) return (
@@ -74,7 +95,7 @@ export function CustomerPortalPage() {
             <Leaf className="w-4 h-4 text-white" />
           </div>
           <div>
-            <p className="text-[15px] font-semibold text-ink">My Business</p>
+            <p className="text-[15px] font-semibold text-ink">{businessName}</p>
             <p className="text-[12px] text-ink-quiet">Customer Portal</p>
           </div>
         </div>
@@ -85,7 +106,19 @@ export function CustomerPortalPage() {
         <div className="bg-white rounded-xl border border-paper-deep p-5">
           <h1 className="text-[20px] font-semibold text-ink">Hi, {customer.name.split(" ")[0]}!</h1>
           <p className="text-[13px] text-ink-quiet mt-1">Here's a summary of your account.</p>
-          {totalOwed > 0 && (
+          {paymentResult === "success" && (
+            <div className="mt-4 bg-[#e8f5e9] border border-[#a5d6a7] rounded-lg px-4 py-3 flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#2e7d32] flex-shrink-0" />
+              <p className="text-[13px] text-[#1b5e20] font-medium">Payment received — thank you!</p>
+            </div>
+          )}
+          {paymentResult === "cancelled" && (
+            <div className="mt-4 bg-[#fff3e0] border border-[#ffcc80] rounded-lg px-4 py-3 flex items-center gap-3">
+              <AlertCircle className="w-4 h-4 text-[#e65100] flex-shrink-0" />
+              <p className="text-[13px] text-[#e65100] font-medium">Payment cancelled — you were not charged.</p>
+            </div>
+          )}
+          {paymentResult === null && totalOwed > 0 && (
             <div className="mt-4 bg-[#fff3e0] border border-[#ffcc80] rounded-lg px-4 py-3 flex items-center gap-3">
               <AlertCircle className="w-4 h-4 text-[#e65100] flex-shrink-0" />
               <p className="text-[13px] text-[#e65100] font-medium">
@@ -132,7 +165,7 @@ export function CustomerPortalPage() {
                 <div key={e.id} className="flex items-center gap-4 px-5 py-3.5">
                   <div className="flex-1 min-w-0">
                     <p className="text-[14px] font-medium text-ink">${Number(e.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-                    <p className="text-[12px] text-ink-quiet">Sent {e.created_at?.split("T")[0]}</p>
+                    <p className="text-[12px] text-ink-quiet">{e.sent_at ? `Sent ${e.sent_at.split("T")[0]}` : `Created ${e.created_at?.split("T")[0]}`}</p>
                     {e.notes && <p className="text-[12px] text-ink-quiet mt-0.5">{e.notes}</p>}
                   </div>
                   <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full capitalize ${statusColor(e.status)}`}>
@@ -158,9 +191,23 @@ export function CustomerPortalPage() {
                     {inv.due_at && <p className="text-[12px] text-ink-quiet">Due {inv.due_at}</p>}
                     {inv.notes && <p className="text-[12px] text-ink-quiet mt-0.5">{inv.notes}</p>}
                   </div>
-                  <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full capitalize ${statusColor(inv.status)}`}>
-                    {inv.status}
-                  </span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {stripeEnabled && inv.status !== "paid" && inv.status !== "voided" && (
+                      <button
+                        onClick={() => handlePayOnline(inv.id)}
+                        disabled={payingInvoiceId === inv.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-moss text-white hover:bg-moss/90 disabled:opacity-60 transition-colors"
+                      >
+                        {payingInvoiceId === inv.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <CreditCard className="w-3.5 h-3.5" />}
+                        Pay Online
+                      </button>
+                    )}
+                    <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full capitalize ${statusColor(inv.status)}`}>
+                      {inv.status}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>

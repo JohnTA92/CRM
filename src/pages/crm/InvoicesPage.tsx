@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { invoiceStatusLabel, type InvoiceStatus, type Invoice, type LineItem } from "@/data/crm";
 import { Plus, FileText, X, Trash2, ChevronDown, Loader2, CreditCard, CheckCircle, AlertCircle } from "lucide-react";
 
@@ -32,6 +33,9 @@ export function InvoicesPage() {
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | "all">("all");
   const [showModal, setShowModal] = useState(false);
 
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
+
   const [customerId, setCustomerId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -46,8 +50,8 @@ export function InvoicesPage() {
   async function loadData() {
     setLoading(true);
     const [invRes, custRes] = await Promise.all([
-      supabase.from("invoices").select("*").order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name, email").eq("archived", false).order("name"),
+      supabase.from("invoices").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
+      supabase.from("customers").select("id, name, email").eq("business_id", businessId).eq("archived", false).order("name"),
     ]);
     if (invRes.data) setInvoices(invRes.data.map(rowToInvoice));
     if (custRes.data) setCustomers(custRes.data);
@@ -108,6 +112,7 @@ export function InvoicesPage() {
     const { data, error } = await supabase
       .from("invoices")
       .insert({
+        business_id: businessId,
         customer_id: customerId,
         status: "draft",
         line_items: items,

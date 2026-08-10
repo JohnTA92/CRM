@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { jobStatusLabel, invoiceStatusLabel, estimateStatusLabel } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import { ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt, Loader2, Clock, CheckCircle2, AlertCircle, Send, Pencil, X, Link2 } from "lucide-react";
@@ -46,7 +47,10 @@ function Field({ label, value, onChange, placeholder, type = "text" }: {
 
 export function CustomerDetailPage() {
   const { services } = useServices();
+  const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [customer, setCustomer] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
   const [estimates, setEstimates] = useState<any[]>([]);
@@ -74,14 +78,14 @@ export function CustomerDetailPage() {
 
   async function load(custId: string) {
     setLoading(true);
-    const { data, error } = await supabase.from("customers").select("*").eq("id", custId).single();
+    const { data, error } = await supabase.from("customers").select("*").eq("business_id", businessId).eq("id", custId).single();
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setCustomer(data);
 
     const [jobRes, estRes, invRes] = await Promise.all([
-      supabase.from("jobs").select("*").eq("customer_id", custId).order("created_at", { ascending: false }),
-      supabase.from("estimates").select("*").eq("customer_id", custId).order("created_at", { ascending: false }),
-      supabase.from("invoices").select("*").eq("customer_id", custId).order("created_at", { ascending: false }),
+      supabase.from("jobs").select("*").eq("business_id", businessId).eq("customer_id", custId).order("created_at", { ascending: false }),
+      supabase.from("estimates").select("*").eq("business_id", businessId).eq("customer_id", custId).order("created_at", { ascending: false }),
+      supabase.from("invoices").select("*").eq("business_id", businessId).eq("customer_id", custId).order("created_at", { ascending: false }),
     ]);
     if (jobRes.data) setJobs(jobRes.data);
     if (estRes.data) setEstimates(estRes.data);
@@ -205,8 +209,8 @@ export function CustomerDetailPage() {
           </div>
         )}
         <div className="flex gap-2 mt-4 pt-4 border-t border-paper-deep flex-wrap">
-          <Button size="sm" className="w-auto gap-1.5"><Plus className="w-3.5 h-3.5" /> New Job</Button>
-          <Button size="sm" variant="secondary" className="w-auto gap-1.5"><FileText className="w-3.5 h-3.5" /> New Estimate</Button>
+          <Button size="sm" className="w-auto gap-1.5" onClick={() => navigate("/jobs", { state: { prefillCustomerId: id } })}><Plus className="w-3.5 h-3.5" /> New Job</Button>
+          <Button size="sm" variant="secondary" className="w-auto gap-1.5" onClick={() => navigate("/estimates", { state: { prefillCustomerId: id } })}><FileText className="w-3.5 h-3.5" /> New Estimate</Button>
           <button
             onClick={copyPortalLink}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-paper-deep bg-white text-ink-soft hover:bg-paper-warm transition-colors"
@@ -309,6 +313,29 @@ export function CustomerDetailPage() {
         </div>
       </section>
 
+      <section className="mb-6">
+        <h2 className="text-[15px] font-semibold text-ink mb-3 flex items-center gap-2">
+          <Receipt className="w-4 h-4 text-ink-quiet" /> Invoices ({invoices.length})
+        </h2>
+        <div className="bg-white rounded-xl border border-paper-deep divide-y divide-paper-deep overflow-hidden">
+          {invoices.length === 0 ? (
+            <p className="text-[13px] text-ink-quiet px-5 py-4">No invoices yet.</p>
+          ) : invoices.map((inv) => (
+            <Link key={inv.id} to={`/invoices/${inv.id}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-paper-warm transition-colors">
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-ink">Invoice</p>
+                <p className="text-[12px] text-ink-quiet">
+                  {inv.sent_at ? `Sent ${inv.sent_at.split("T")[0]}` : "Draft"}
+                  {inv.due_at ? ` · Due ${inv.due_at}` : ""}
+                </p>
+              </div>
+              <p className="text-[13px] font-semibold text-ink mr-3">${Number(inv.total).toLocaleString()}</p>
+              <Badge variant={invStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</Badge>
+            </Link>
+          ))}
+        </div>
+      </section>
+
       {(() => {
         type TimelineEvent = { date: string; label: string; sub: string; icon: React.ElementType; color: string; link: string };
         const events: TimelineEvent[] = [];
@@ -356,28 +383,6 @@ export function CustomerDetailPage() {
         );
       })()}
 
-      <section>
-        <h2 className="text-[15px] font-semibold text-ink mb-3 flex items-center gap-2">
-          <Receipt className="w-4 h-4 text-ink-quiet" /> Invoices ({invoices.length})
-        </h2>
-        <div className="bg-white rounded-xl border border-paper-deep divide-y divide-paper-deep overflow-hidden">
-          {invoices.length === 0 ? (
-            <p className="text-[13px] text-ink-quiet px-5 py-4">No invoices yet.</p>
-          ) : invoices.map((inv) => (
-            <Link key={inv.id} to={`/invoices/${inv.id}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-paper-warm transition-colors">
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-medium text-ink">Invoice</p>
-                <p className="text-[12px] text-ink-quiet">
-                  {inv.sent_at ? `Sent ${inv.sent_at.split("T")[0]}` : "Draft"}
-                  {inv.due_at ? ` · Due ${inv.due_at}` : ""}
-                </p>
-              </div>
-              <p className="text-[13px] font-semibold text-ink mr-3">${Number(inv.total).toLocaleString()}</p>
-              <Badge variant={invStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</Badge>
-            </Link>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

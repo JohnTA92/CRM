@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { estimateStatusLabel, type EstimateStatus, type Estimate, type LineItem } from "@/data/crm";
 import { useServices } from "@/lib/services";
 import { Plus, FileText, X, Trash2, ChevronDown, Loader2, Send, Clock, Star, Sparkles } from "lucide-react";
@@ -81,6 +82,9 @@ const FOLLOW_UP_OPTIONS = [
 
 export function EstimatesPage() {
   const { services } = useServices();
+  const location = useLocation();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,15 +104,18 @@ export function EstimatesPage() {
   ]);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  useEffect(() => { loadData(); }, []);
+
   useEffect(() => {
-    loadData();
-  }, []);
+    const prefill = (location.state as any)?.prefillCustomerId;
+    if (prefill) { setCustomerId(prefill); setShowModal(true); window.history.replaceState({}, ""); }
+  }, [location.state]);
 
   async function loadData() {
     setLoading(true);
     const [estRes, custRes] = await Promise.all([
-      supabase.from("estimates").select("*").order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name, email").eq("archived", false).order("name"),
+      supabase.from("estimates").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
+      supabase.from("customers").select("id, name, email").eq("business_id", businessId).eq("archived", false).order("name"),
     ]);
     if (estRes.data) setEstimates(estRes.data.map(rowToEstimate));
     if (custRes.data) setCustomers(custRes.data);
@@ -174,6 +181,7 @@ export function EstimatesPage() {
     const { data, error } = await supabase
       .from("estimates")
       .insert({
+        business_id: businessId,
         customer_id: customerId,
         service_type: serviceType,
         tier: tier === "none" ? null : tier,
@@ -291,7 +299,7 @@ export function EstimatesPage() {
                     {est.status !== "sent" && !est.followUpSentAt && <span className="text-ink-quiet">—</span>}
                   </div>
                   <p className="text-[14px] font-semibold text-ink text-right">${est.total.toLocaleString()}</p>
-                  <p className="text-[12px] text-ink-quiet text-right">{est.sentAt ?? "—"}</p>
+                  <p className="text-[12px] text-ink-quiet text-right">{est.sentAt ? est.sentAt.split("T")[0] : "—"}</p>
                   <Badge variant={estStatusBadge(est.status)}>{estimateStatusLabel(est.status)}</Badge>
                 </Link>
               ))}
@@ -450,7 +458,7 @@ export function EstimatesPage() {
                   <p className="text-[13px] font-semibold text-ink">Auto Quote Follow-up</p>
                 </div>
                 <p className="text-[12px] text-ink-quiet mb-3">
-                  Automatically send a reminder if the customer hasn't approved after:
+                  Save a reminder preference — follow up manually after this many days if not approved:
                 </p>
                 <div className="flex gap-2 flex-wrap">
                   {FOLLOW_UP_OPTIONS.map((opt) => (

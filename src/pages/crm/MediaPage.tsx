@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/design-system/primitives/Button";
 import { MediaModal } from "./MediaModal";
 import {
@@ -25,6 +26,8 @@ type MediaItem = {
 
 
 export function MediaPage() {
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [jobs, setJobs] = useState<{ id: string; title: string; customer_id: string; status: string }[]>([]);
   const [customerList, setCustomerList] = useState<{ id: string; name: string }[]>([]);
@@ -59,9 +62,9 @@ export function MediaPage() {
   async function loadAll() {
     setLoading(true);
     const [mediaRes, jobRes, custRes] = await Promise.all([
-      supabase.from("job_media").select("*").order("created_at", { ascending: false }),
-      supabase.from("jobs").select("id, title, customer_id, status").order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name"),
+      supabase.from("job_media").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
+      supabase.from("jobs").select("id, title, customer_id, status").eq("business_id", businessId).order("created_at", { ascending: false }),
+      supabase.from("customers").select("id, name").eq("business_id", businessId),
     ]);
 
     const custMap: Record<string, string> = {};
@@ -148,6 +151,7 @@ export function MediaPage() {
       const { data: urlData } = supabase.storage.from("job-media").getPublicUrl(path);
 
       await supabase.from("job_media").insert({
+        business_id: businessId,
         job_id: uploadJobId || null,
         customer_id: resolvedCustomerId,
         tag: uploadTag,

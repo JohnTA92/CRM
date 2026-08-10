@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from "recharts";
 import { TrendingUp, TrendingDown, DollarSign, Briefcase, Receipt, ChevronRight, Loader2 } from "lucide-react";
 
@@ -27,16 +28,18 @@ export function RevenuePage() {
   const [expenses, setExpenses] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [year, setYear] = useState(new Date().getFullYear());
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
 
   useEffect(() => { load(); }, []);
 
   async function load() {
     setLoading(true);
     const [invRes, jobRes, expRes, custRes] = await Promise.all([
-      supabase.from("invoices").select("*"),
-      supabase.from("jobs").select("id, title, customer_id, status, service_type, price, created_at"),
-      supabase.from("expenses").select("*"),
-      supabase.from("customers").select("id, name"),
+      supabase.from("invoices").select("*").eq("business_id", businessId),
+      supabase.from("jobs").select("id, title, customer_id, status, service_type, price, created_at").eq("business_id", businessId),
+      supabase.from("expenses").select("*").eq("business_id", businessId),
+      supabase.from("customers").select("id, name").eq("business_id", businessId),
     ]);
     if (invRes.data) setInvoices(invRes.data);
     if (jobRes.data) setJobs(jobRes.data);
@@ -89,7 +92,7 @@ export function RevenuePage() {
   // ── Monthly job count ──
   const monthlyJobs = MONTHS_SHORT.map((label, mi) => {
     const monthStr = `${year}-${String(mi + 1).padStart(2, "0")}`;
-    const count = jobs.filter((j) => j.created_at?.startsWith(monthStr)).length;
+    const count = jobs.filter((j) => ["complete","invoiced"].includes(j.status) && (j.scheduled_date ?? j.created_at)?.startsWith(monthStr)).length;
     return { label, count };
   });
 

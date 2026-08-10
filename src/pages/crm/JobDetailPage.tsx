@@ -4,12 +4,13 @@ import { MediaModal } from "./MediaModal";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { jobStatusLabel, estimateStatusLabel, invoiceStatusLabel } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import {
   ArrowLeft, Clock, Repeat, StickyNote, FileText, Receipt,
   CheckCircle2, Loader2, X, ChevronDown, RefreshCw, Trash2,
-  DollarSign, TrendingUp, Zap, Camera, Play, Plus, ListChecks,
+  DollarSign, TrendingUp, Zap, Camera, Play, Plus, ListChecks, Users,
 } from "lucide-react";
 
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
@@ -44,6 +45,8 @@ export function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { services } = useServices();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [job, setJob] = useState<any>(null);
   const [customer, setCustomer] = useState<any>(null);
   const [estimate, setEstimate] = useState<any>(null);
@@ -70,10 +73,31 @@ export function JobDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
+  // crew
+  const [allCrew, setAllCrew] = useState<{id:string; name:string; role:string}[]>([]);
+  const [crewIds, setCrewIds] = useState<string[]>([]);
+  const [crewSaving, setCrewSaving] = useState(false);
+  const [timeEntries, setTimeEntries] = useState<any[]>([]);
+
   // checklist
   const [checklist, setChecklist] = useState<{ id: string; text: string; done: boolean }[]>([]);
   const [newTaskText, setNewTaskText] = useState("");
   const [checklistSaving, setChecklistSaving] = useState(false);
+
+  async function saveCrew(ids: string[]) {
+    setCrewSaving(true);
+    await supabase.from("jobs").update({ crew_member_ids: ids }).eq("id", job.id);
+    setCrewIds(ids);
+    setCrewSaving(false);
+  }
+
+  function formatDuration(ms: number): string {
+    const totalMins = Math.floor(ms / 60000);
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
 
   async function saveChecklist(updated: { id: string; text: string; done: boolean }[]) {
     setChecklistSaving(true);
@@ -140,16 +164,20 @@ export function JobDetailPage() {
       recurring: row.recurring ?? "none",
       price: row.price ?? null,
       createdAt: row.created_at?.split("T")[0] ?? "",
+      crewMemberIds: Array.isArray(row.crew_member_ids) ? row.crew_member_ids : [],
     };
     setJob(mapped);
     setChecklist(Array.isArray(row.checklist) ? row.checklist : []);
+    setCrewIds(Array.isArray(row.crew_member_ids) ? row.crew_member_ids : []);
 
-    const [custRes, estRes, invRes, expRes, mediaRes] = await Promise.all([
+    const [custRes, estRes, invRes, expRes, mediaRes, crewRes, timeRes] = await Promise.all([
       supabase.from("customers").select("*").eq("id", row.customer_id).single(),
       row.estimate_id ? supabase.from("estimates").select("*").eq("id", row.estimate_id).single() : Promise.resolve({ data: null }),
       row.invoice_id ? supabase.from("invoices").select("*").eq("id", row.invoice_id).single() : Promise.resolve({ data: null }),
-      supabase.from("expenses").select("*").eq("job_id", jobId),
-      supabase.from("job_media").select("*").eq("job_id", jobId).order("created_at", { ascending: true }),
+      supabase.from("expenses").select("*").eq("job_id", jobId).eq("business_id", businessId),
+      supabase.from("job_media").select("*").eq("job_id", jobId).eq("business_id", businessId).order("created_at", { ascending: true }),
+      supabase.from("crew_members").select("id, name, role").eq("active", true).eq("business_id", businessId).order("name"),
+      supabase.from("time_entries").select("*").eq("job_id", jobId).eq("business_id", businessId),
     ]);
 
     if (custRes.data) setCustomer(custRes.data);
@@ -157,6 +185,8 @@ export function JobDetailPage() {
     if (invRes.data) setInvoice(invRes.data);
     if (expRes.data) setJobExpenses(expRes.data);
     if (mediaRes.data) setJobMedia(mediaRes.data);
+    if (crewRes.data) setAllCrew(crewRes.data);
+    setTimeEntries(timeRes.data ?? []);
     setLoading(false);
   }
 
@@ -172,7 +202,8 @@ export function JobDetailPage() {
       else if (job.recurring === "biweekly") base.setDate(base.getDate() + 14);
       else if (job.recurring === "monthly") base.setMonth(base.getMonth() + 1);
       const nextDate = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
-      await supabase.from("jobs").insert({
+      const { error: recurErr } = await supabase.from("jobs").insert({
+        business_id: businessId,
         customer_id: job.customerId,
         service_type: job.serviceType,
         title: job.title,
@@ -183,9 +214,11 @@ export function JobDetailPage() {
         notes: job.notes || null,
         price: job.price ?? null,
         recurring: job.recurring,
+        estimate_id: job.estimateId ?? null,
         crew_member_ids: [],
         checklist: [],
       });
+      if (recurErr) console.error("Failed to create next recurring job:", recurErr.message);
     }
   }
 
@@ -197,6 +230,7 @@ export function JobDetailPage() {
     const { data, error } = await supabase
       .from("invoices")
       .insert({
+        business_id: businessId,
         customer_id: job.customerId,
         job_id: job.id,
         estimate_id: estimate?.id ?? null,
@@ -241,6 +275,7 @@ export function JobDetailPage() {
       const { data: urlData } = supabase.storage.from("job-media").getPublicUrl(path);
 
       const { error: dbErr } = await supabase.from("job_media").insert({
+        business_id: businessId,
         job_id: job.id,
         customer_id: job.customerId,
         tag,
@@ -258,7 +293,7 @@ export function JobDetailPage() {
       }
     }
 
-    const { data } = await supabase.from("job_media").select("*").eq("job_id", job.id).order("created_at", { ascending: true });
+    const { data } = await supabase.from("job_media").select("*").eq("job_id", job.id).eq("business_id", businessId).order("created_at", { ascending: true });
     if (data) setJobMedia(data);
     setMediaUploading(false);
     e.target.value = "";
@@ -287,7 +322,7 @@ export function JobDetailPage() {
     setShowEdit(true);
 
     if (customers.length === 0) {
-      supabase.from("customers").select("id, name").eq("archived", false).order("name")
+      supabase.from("customers").select("id, name").eq("archived", false).eq("business_id", businessId).order("name")
         .then(({ data }) => { if (data) setCustomers(data); });
     }
   }
@@ -338,6 +373,7 @@ export function JobDetailPage() {
         recurring: row.recurring ?? "none",
         price: row.price ?? null,
         createdAt: row.created_at?.split("T")[0] ?? "",
+        crewMemberIds: Array.isArray(row.crew_member_ids) ? row.crew_member_ids : crewIds,
       };
       setJob(updated);
       if (row.customer_id !== job.customerId) {
@@ -598,7 +634,7 @@ export function JobDetailPage() {
           ) : (
             <div>
               <p className="text-[13px] text-ink-quiet mb-2">No estimate yet</p>
-              <Button size="sm" variant="secondary" className="w-auto text-[12px] h-8">Create estimate</Button>
+              <Button size="sm" variant="secondary" className="w-auto text-[12px] h-8" onClick={() => navigate("/estimates", { state: { prefillCustomerId: job.customerId } })}>Create estimate</Button>
             </div>
           )}
         </div>
@@ -637,6 +673,82 @@ export function JobDetailPage() {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ── Crew Assignment ── */}
+      <div className="bg-white rounded-xl border border-paper-deep mb-5 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3.5 bg-paper-warm border-b border-paper-deep">
+          <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5" /> Crew Assigned
+            {crewIds.length > 0 && <span className="font-normal ml-1">{crewIds.length}</span>}
+          </p>
+          {crewSaving && <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-quiet" />}
+        </div>
+        <div className="px-5 py-4">
+          {allCrew.length === 0 ? (
+            <p className="text-[13px] text-ink-quiet">No crew members added yet. <a href="/crew" className="text-accent hover:underline">Add crew →</a></p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {allCrew.map((m) => {
+                const assigned = crewIds.includes(m.id);
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => saveCrew(assigned ? crewIds.filter(i => i !== m.id) : [...crewIds, m.id])}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[13px] font-medium transition-colors ${
+                      assigned ? "bg-ink text-white border-ink" : "bg-white text-ink-soft border-paper-deep hover:bg-paper-warm"
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${assigned ? "bg-white/20 text-white" : "bg-paper-dark text-ink-soft"}`}>
+                      {m.name.split(" ").map((n:string) => n[0]).join("").slice(0,2).toUpperCase()}
+                    </div>
+                    {m.name}
+                    {assigned && <CheckCircle2 className="w-3.5 h-3.5 opacity-70" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {timeEntries.length > 0 && (() => {
+            // group entries by crew_member_id
+            const byMember: Record<string, number> = {};
+            timeEntries.forEach((e) => {
+              if (!e.clocked_out_at) return; // skip active (no end time)
+              const ms = new Date(e.clocked_out_at).getTime() - new Date(e.clocked_in_at).getTime();
+              byMember[e.crew_member_id] = (byMember[e.crew_member_id] ?? 0) + ms;
+            });
+            const activeEntry = timeEntries.find((e) => !e.clocked_out_at);
+            const entries = Object.entries(byMember);
+            if (entries.length === 0 && !activeEntry) return null;
+            return (
+              <div className="mt-3 pt-3 border-t border-paper-deep">
+                <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-2">Time Logged</p>
+                <div className="flex flex-wrap gap-2">
+                  {entries.map(([memberId, ms]) => {
+                    const m = allCrew.find((c) => c.id === memberId);
+                    return (
+                      <span key={memberId} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-paper-warm border border-paper-deep rounded-lg text-[12px] font-medium text-ink">
+                        <span className="text-[10px] font-bold">{(m?.name ?? "Unknown").split(" ").map((n:string) => n[0]).join("").slice(0,2).toUpperCase()}</span>
+                        {formatDuration(ms)}
+                      </span>
+                    );
+                  })}
+                  {activeEntry && (() => {
+                    const m = allCrew.find((c) => c.id === activeEntry.crew_member_id);
+                    const elapsed = Date.now() - new Date(activeEntry.clocked_in_at).getTime();
+                    return (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-[#e8f5e9] border border-[#a5d6a7] rounded-lg text-[12px] font-medium text-[#2e7d32]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#4caf50] animate-pulse" />
+                        <span className="text-[10px] font-bold">{(m?.name ?? "Unknown").split(" ").map((n:string) => n[0]).join("").slice(0,2).toUpperCase()}</span>
+                        {formatDuration(elapsed)} (active)
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -707,7 +819,7 @@ export function JobDetailPage() {
         return (
           <div className="flex items-center gap-2 mb-5">
             <button
-              onClick={() => setLightboxIdx(0)}
+              onClick={() => setLightboxIdx(jobMedia.length > 0 ? 0 : null)}
               className="flex items-center gap-2.5 px-4 py-2.5 bg-white border border-paper-deep rounded-xl hover:border-ink/20 hover:shadow-sm transition-all group"
             >
               {/* Thumbnail stack preview */}

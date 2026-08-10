@@ -3,9 +3,11 @@ import { useParams, Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { invoiceStatusLabel } from "@/data/crm";
 import { buildInvoiceEmail, sendEmail } from "@/lib/email";
-import { ArrowLeft, Send, CheckCircle2, CreditCard, Loader2, Mail, X, AlertCircle, Plus, DollarSign } from "lucide-react";
+import { ArrowLeft, Send, CheckCircle2, CreditCard, Loader2, Mail, X, AlertCircle, Plus, DollarSign, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { createPaymentSession } from "@/lib/stripe";
 
 function invStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" {
   const m: Record<string, "warning" | "success" | "error" | "muted" | "default"> = {
@@ -16,6 +18,8 @@ function invStatusBadge(s: string): "warning" | "success" | "error" | "muted" | 
 
 export function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [invoice, setInvoice] = useState<any>(null);
   const [customer, setCustomer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -29,19 +33,35 @@ export function InvoiceDetailPage() {
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editItems, setEditItems] = useState<any[]>([]);
+  const [editNotes, setEditNotes] = useState("");
+  const [editDueAt, setEditDueAt] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
   const [showSendModal, setShowSendModal] = useState(false);
   const [sendTo, setSendTo] = useState("");
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  const [stripeEnabled, setStripeEnabled] = useState(false);
+  const [creatingPaymentLink, setCreatingPaymentLink] = useState(false);
+  const [paymentLinkError, setPaymentLinkError] = useState<string | null>(null);
+
   useEffect(() => { if (id) load(id); }, [id]);
+  useEffect(() => {
+    supabase.from("company_settings").select("stripe_enabled, stripe_publishable_key").eq("id", businessId).single()
+      .then(({ data }) => {
+        if (data?.stripe_enabled && data?.stripe_publishable_key?.startsWith("pk_")) setStripeEnabled(true);
+      });
+  }, [businessId]);
 
   async function load(invId: string) {
     setLoading(true);
-    const { data, error } = await supabase.from("invoices").select("*").eq("id", invId).single();
+    const { data, error } = await supabase.from("invoices").select("*").eq("id", invId).eq("business_id", businessId).single();
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setInvoice(data);
-    const { data: cust } = await supabase.from("customers").select("*").eq("id", data.customer_id).single();
+    const { data: cust } = await supabase.from("customers").select("*").eq("id", data.customer_id).eq("business_id", businessId).single();
     if (cust) {
       setCustomer(cust);
       setSendTo(cust.email ?? "");
@@ -50,6 +70,7 @@ export function InvoiceDetailPage() {
       .from("invoice_payments")
       .select("*")
       .eq("invoice_id", invId)
+      .eq("business_id", businessId)
       .order("paid_at", { ascending: true });
     if (pmts) setPayments(pmts);
     setLoading(false);
@@ -62,6 +83,7 @@ export function InvoiceDetailPage() {
     setPaymentError(null);
     const { data: pmt, error } = await supabase.from("invoice_payments").insert({
       invoice_id: invoice.id,
+      business_id: businessId,
       amount: amt,
       method: paymentMethod,
       note: paymentNote.trim() || null,
@@ -71,8 +93,7 @@ export function InvoiceDetailPage() {
     const newPayments = [...payments, pmt];
     setPayments(newPayments);
     const totalPaid = newPayments.reduce((s: number, p: any) => s + (p.amount ?? 0), 0);
-    const invoiceTotal = lineItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
-    if (totalPaid >= invoiceTotal) {
+    if (totalPaid >= (invoice.total ?? 0)) {
       await updateStatus("paid");
     }
     setPaymentAmount("");
@@ -88,6 +109,35 @@ export function InvoiceDetailPage() {
     if (status === "paid") updates.paid_at = new Date().toISOString();
     const { data } = await supabase.from("invoices").update(updates).eq("id", invoice.id).select().single();
     if (data) setInvoice(data);
+  }
+
+  function openEdit() {
+    setEditItems((invoice.line_items ?? []).map((li: any) => ({ ...li })));
+    setEditNotes(invoice.notes ?? "");
+    setEditDueAt(invoice.due_at ?? "");
+    setShowEditModal(true);
+  }
+  function updateEditItem(idx: number, field: string, value: string) {
+    setEditItems((prev) => prev.map((li, i) => i === idx ? { ...li, [field]: field === "description" ? value : Number(value) } : li));
+  }
+  async function saveEdit() {
+    setEditSaving(true);
+    const newTotal = editItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
+    const { data } = await supabase.from("invoices")
+      .update({ line_items: editItems, notes: editNotes || null, due_at: editDueAt || null, total: newTotal })
+      .eq("id", invoice.id).select().single();
+    if (data) setInvoice(data);
+    setEditSaving(false);
+    setShowEditModal(false);
+  }
+
+  async function handleCreatePaymentLink() {
+    setCreatingPaymentLink(true);
+    setPaymentLinkError(null);
+    const { url, error } = await createPaymentSession(invoice.id);
+    setCreatingPaymentLink(false);
+    if (error) { setPaymentLinkError(error); return; }
+    if (url) window.open(url, "_blank");
   }
 
   async function handleSend() {
@@ -133,7 +183,7 @@ export function InvoiceDetailPage() {
   );
 
   const lineItems: any[] = invoice.line_items ?? [];
-  const subtotal = lineItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
+  const subtotal = invoice.total ?? lineItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
   const totalPaid = payments.reduce((s: number, p: any) => s + (p.amount ?? 0), 0);
   const balanceDue = Math.max(0, subtotal - totalPaid);
   const PAYMENT_METHODS = ["cash", "check", "card", "venmo", "zelle", "other"];
@@ -243,21 +293,129 @@ export function InvoiceDetailPage() {
         </div>
       )}
 
-      <div className="flex gap-2">
+      {paymentLinkError && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-[#fef2f2] border border-[#fecaca] text-[13px] text-[#dc2626] mb-4">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" /> {paymentLinkError}
+        </div>
+      )}
+
+      <div className="flex gap-2 flex-wrap">
         {invoice.status !== "paid" && invoice.status !== "voided" && (
           <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowSendModal(true)}>
             <Mail className="w-3.5 h-3.5" /> Email to Customer
           </Button>
         )}
+        {stripeEnabled && invoice.status !== "paid" && invoice.status !== "voided" && (
+          <Button size="sm" variant="secondary" className="w-auto gap-1.5" onClick={handleCreatePaymentLink} disabled={creatingPaymentLink}>
+            {creatingPaymentLink ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CreditCard className="w-3.5 h-3.5" />}
+            {creatingPaymentLink ? "Creating…" : "Payment Link"}
+            {!creatingPaymentLink && <ExternalLink className="w-3 h-3 opacity-50" />}
+          </Button>
+        )}
         {["sent", "overdue"].includes(invoice.status) && (
-          <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" onClick={() => updateStatus("paid")}>
+          <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" onClick={async () => {
+            await supabase.from("invoice_payments").insert({
+              invoice_id: invoice.id, business_id: businessId, amount: subtotal - totalPaid,
+              method: "other", note: "Marked paid manually",
+              paid_at: new Date().toISOString(),
+            });
+            await updateStatus("paid");
+            const { data: pmts } = await supabase.from("invoice_payments").select("*").eq("invoice_id", invoice.id).eq("business_id", businessId).order("paid_at");
+            if (pmts) setPayments(pmts);
+          }}>
             <CheckCircle2 className="w-3.5 h-3.5" /> Mark as Paid
           </Button>
         )}
         {invoice.status !== "paid" && invoice.status !== "voided" && (
-          <Button size="sm" variant="ghost" className="w-auto">Edit</Button>
+          <Button size="sm" variant="ghost" className="w-auto gap-1.5" onClick={openEdit}>
+            <Pencil className="w-3.5 h-3.5" /> Edit
+          </Button>
         )}
       </div>
+
+      {/* Edit Invoice modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-paper-deep flex-shrink-0">
+              <h2 className="text-[15px] font-semibold text-ink">Edit Invoice</h2>
+              <button onClick={() => setShowEditModal(false)} className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+              {/* Due date */}
+              <div>
+                <label className="block text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-1.5">Due Date</label>
+                <input type="date" value={editDueAt} onChange={(e) => setEditDueAt(e.target.value)}
+                  className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30" />
+              </div>
+              {/* Line items */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide">Line Items</p>
+                  <button onClick={() => setEditItems((p) => [...p, { id: crypto.randomUUID(), description: "", type: "service", quantity: 1, unitPrice: 0 }])}
+                    className="flex items-center gap-1 text-[12px] font-semibold text-accent hover:text-accent/80">
+                    <Plus className="w-3.5 h-3.5" /> Add Item
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {editItems.map((li, idx) => (
+                    <div key={li.id ?? idx} className="bg-paper-warm rounded-xl border border-paper-deep p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input value={li.description} onChange={(e) => updateEditItem(idx, "description", e.target.value)}
+                          placeholder="Description"
+                          className="flex-1 px-3 py-2 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30" />
+                        <button onClick={() => setEditItems((p) => p.filter((_, i) => i !== idx))}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-ink-quiet hover:text-red-500 flex-shrink-0">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-semibold text-ink-quiet uppercase mb-1">Type</label>
+                          <select value={li.type} onChange={(e) => updateEditItem(idx, "type", e.target.value)}
+                            className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none">
+                            {["service","material","labor","other"].map((t) => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-ink-quiet uppercase mb-1">Qty</label>
+                          <input type="number" min="1" value={li.quantity} onChange={(e) => updateEditItem(idx, "quantity", e.target.value)}
+                            className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-ink-quiet uppercase mb-1">Unit Price</label>
+                          <input type="number" min="0" step="0.01" value={li.unitPrice} onChange={(e) => updateEditItem(idx, "unitPrice", e.target.value)}
+                            className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none" />
+                        </div>
+                      </div>
+                      <p className="text-[12px] text-ink-quiet text-right">Line total: <span className="font-semibold text-ink">${(li.quantity * li.unitPrice).toFixed(2)}</span></p>
+                    </div>
+                  ))}
+                </div>
+                {editItems.length > 0 && (
+                  <div className="flex items-center justify-between mt-3 px-1">
+                    <p className="text-[13px] font-semibold text-ink">Total</p>
+                    <p className="text-[18px] font-bold text-ink">${editItems.reduce((s, li) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0).toFixed(2)}</p>
+                  </div>
+                )}
+              </div>
+              {/* Notes */}
+              <div>
+                <label className="block text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-1.5">Notes</label>
+                <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={3} placeholder="Optional notes…"
+                  className="w-full px-3 py-2.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none" />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-paper-deep flex gap-2 justify-end flex-shrink-0">
+              <Button variant="secondary" size="sm" className="w-auto" onClick={() => setShowEditModal(false)}>Cancel</Button>
+              <Button size="sm" className="w-auto gap-1.5" onClick={saveEdit} disabled={editSaving}>
+                {editSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                {editSaving ? "Saving…" : "Save Changes"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Log Payment modal */}
       {showPaymentModal && (

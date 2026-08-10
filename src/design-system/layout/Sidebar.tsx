@@ -1,6 +1,9 @@
 import { NavLink } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import {
   LayoutDashboard,
   Users,
@@ -16,13 +19,15 @@ import {
   Navigation,
   HardHat,
   TrendingUp,
+  CalendarCheck,
+  LogOut,
 } from "lucide-react";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
   { to: "/customers", icon: Users, label: "Customers" },
   { to: "/jobs", icon: Briefcase, label: "Jobs" },
-  { to: "/schedule", icon: CalendarDays, label: "Schedule" },
+  { to: "/schedule", icon: CalendarDays, label: "Calendar" },
   { to: "/estimates", icon: FileText, label: "Estimates" },
   { to: "/invoices", icon: Receipt, label: "Invoices" },
   { to: "/expenses", icon: Wallet, label: "Expenses" },
@@ -30,12 +35,21 @@ const navItems = [
   { to: "/media", icon: Camera, label: "Job Media" },
   { to: "/routes", icon: Navigation, label: "Routes" },
   { to: "/crew", icon: HardHat, label: "Crew" },
+  { to: "/scheduling", icon: CalendarCheck, label: "Crew Board" },
   { to: "/revenue", icon: TrendingUp, label: "Revenue" },
 ];
 
 export function Sidebar() {
   const { theme } = useTheme();
+  const { user, business, signOut } = useAuth();
   const dark = theme === "dark";
+  const [businessName, setBusinessName] = useState("My Business");
+
+  useEffect(() => {
+    if (business?.name) { setBusinessName(business.name); return; }
+    supabase.from("company_settings").select("business_name").eq("id", "default").single()
+      .then(({ data }) => { if (data?.business_name) setBusinessName(data.business_name); });
+  }, [business]);
 
   const bg = dark ? "bg-[#111111] border-r border-white/10" : "bg-white border-r border-paper-deep";
   const logoText = dark ? "text-white" : "text-ink";
@@ -53,7 +67,7 @@ export function Sidebar() {
           <Leaf className="w-4 h-4 text-white" />
         </div>
         <div>
-          <p className={cn("font-semibold text-[14px] leading-tight", logoText)}>My Business</p>
+          <p className={cn("font-semibold text-[14px] leading-tight", logoText)}>{businessName}</p>
           <p className={cn("text-[11px]", logoSub)}>Field CRM</p>
         </div>
       </div>
@@ -90,14 +104,23 @@ export function Sidebar() {
           <Settings className="w-4 h-4 flex-shrink-0" />
           Settings
         </NavLink>
-        <div className="flex items-center gap-2.5 px-3 py-2.5 mt-1">
+        <div className="flex items-center gap-2.5 px-3 py-2 mt-1">
           <div className="w-6 h-6 rounded-full bg-moss flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-            ME
+            {user?.email?.[0]?.toUpperCase() ?? "?"}
           </div>
-          <div className="min-w-0">
-            <p className={cn("text-[12px] font-medium truncate", ownerText)}>Owner</p>
+          <div className="min-w-0 flex-1">
+            <p className={cn("text-[12px] font-medium truncate", ownerText)}>
+              {user?.email ?? "Owner"}
+            </p>
             <p className={cn("text-[10px] truncate", ownerSub)}>Admin</p>
           </div>
+          <button
+            onClick={signOut}
+            title="Sign out"
+            className={cn("p-1.5 rounded-lg transition-colors flex-shrink-0", dark ? "text-white/40 hover:text-white hover:bg-white/10" : "text-ink-quiet hover:text-ink hover:bg-paper-warm")}
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
     </aside>

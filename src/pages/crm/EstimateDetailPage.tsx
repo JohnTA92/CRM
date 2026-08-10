@@ -3,9 +3,10 @@ import { useParams, Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { estimateStatusLabel } from "@/data/crm";
 import { buildEstimateEmail, sendEmail } from "@/lib/email";
-import { ArrowLeft, Send, ThumbsUp, ThumbsDown, Loader2, Mail, X, CheckCircle2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Send, ThumbsUp, ThumbsDown, Loader2, Mail, X, CheckCircle2, AlertCircle, Plus, Trash2, Pencil } from "lucide-react";
 
 function estStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" {
   const m: Record<string, "warning" | "success" | "error" | "muted" | "default"> = {
@@ -26,14 +27,22 @@ export function EstimateDetailPage() {
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editItems, setEditItems] = useState<any[]>([]);
+  const [editNotes, setEditNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
+
   useEffect(() => { if (id) load(id); }, [id]);
 
   async function load(estId: string) {
     setLoading(true);
-    const { data, error } = await supabase.from("estimates").select("*").eq("id", estId).single();
+    const { data, error } = await supabase.from("estimates").select("*").eq("id", estId).eq("business_id", businessId).single();
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setEstimate(data);
-    const { data: cust } = await supabase.from("customers").select("*").eq("id", data.customer_id).single();
+    const { data: cust } = await supabase.from("customers").select("*").eq("id", data.customer_id).eq("business_id", businessId).single();
     if (cust) {
       setCustomer(cust);
       setSendTo(cust.email ?? "");
@@ -46,6 +55,36 @@ export function EstimateDetailPage() {
     if (status === "sent") updates.sent_at = new Date().toISOString();
     const { data } = await supabase.from("estimates").update(updates).eq("id", estimate.id).select().single();
     if (data) setEstimate(data);
+  }
+
+  function openEdit() {
+    setEditItems((estimate.line_items ?? []).map((li: any) => ({ ...li })));
+    setEditNotes(estimate.notes ?? "");
+    setShowEditModal(true);
+  }
+
+  function updateItem(idx: number, field: string, value: string) {
+    const stringFields = ["description", "type"];
+    setEditItems((prev) => prev.map((li, i) => i === idx ? { ...li, [field]: stringFields.includes(field) ? value : Number(value) } : li));
+  }
+
+  function addItem() {
+    setEditItems((prev) => [...prev, { id: crypto.randomUUID(), description: "", type: "service", quantity: 1, unitPrice: 0 }]);
+  }
+
+  function removeItem(idx: number) {
+    setEditItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  async function saveEdit() {
+    setSaving(true);
+    const newTotal = editItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
+    const { data } = await supabase.from("estimates")
+      .update({ line_items: editItems, notes: editNotes, total: newTotal })
+      .eq("id", estimate.id).select().single();
+    if (data) setEstimate(data);
+    setSaving(false);
+    setShowEditModal(false);
   }
 
   async function handleSend() {
@@ -158,8 +197,116 @@ export function EstimateDetailPage() {
             </Button>
           </>
         )}
-        <Button size="sm" variant={estimate.status === "draft" ? "secondary" : "ghost"} className="w-auto">Edit</Button>
+        {!["approved","declined","expired"].includes(estimate.status) && (
+          <Button size="sm" variant={estimate.status === "draft" ? "secondary" : "ghost"} className="w-auto gap-1.5" onClick={openEdit}>
+            <Pencil className="w-3.5 h-3.5" /> Edit
+          </Button>
+        )}
       </div>
+
+      {/* Edit modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-paper-deep flex-shrink-0">
+              <h2 className="text-[15px] font-semibold text-ink">Edit Estimate</h2>
+              <button onClick={() => setShowEditModal(false)} className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+              {/* Line items */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide">Line Items</p>
+                  <button onClick={addItem} className="flex items-center gap-1 text-[12px] font-semibold text-accent hover:text-accent/80 transition-colors">
+                    <Plus className="w-3.5 h-3.5" /> Add Item
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {editItems.map((li, idx) => (
+                    <div key={li.id ?? idx} className="bg-paper-warm rounded-xl border border-paper-deep p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={li.description}
+                          onChange={(e) => updateItem(idx, "description", e.target.value)}
+                          placeholder="Description"
+                          className="flex-1 px-3 py-2 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent"
+                        />
+                        <button onClick={() => removeItem(idx)} className="p-1.5 rounded-lg hover:bg-red-50 text-ink-quiet hover:text-red-500 transition-colors flex-shrink-0">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-semibold text-ink-quiet uppercase tracking-wide mb-1">Type</label>
+                          <select
+                            value={li.type}
+                            onChange={(e) => updateItem(idx, "type", e.target.value)}
+                            className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30">
+                            <option value="service">Service</option>
+                            <option value="material">Material</option>
+                            <option value="labor">Labor</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-ink-quiet uppercase tracking-wide mb-1">Qty</label>
+                          <input
+                            type="number" min="1" value={li.quantity}
+                            onChange={(e) => updateItem(idx, "quantity", e.target.value)}
+                            className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-ink-quiet uppercase tracking-wide mb-1">Unit Price</label>
+                          <input
+                            type="number" min="0" step="0.01" value={li.unitPrice}
+                            onChange={(e) => updateItem(idx, "unitPrice", e.target.value)}
+                            className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[12px] text-ink-quiet text-right">
+                        Line total: <span className="font-semibold text-ink">${(li.quantity * li.unitPrice).toFixed(2)}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {editItems.length > 0 && (
+                  <div className="flex items-center justify-between mt-3 px-1">
+                    <p className="text-[13px] font-semibold text-ink">Total</p>
+                    <p className="text-[18px] font-bold text-ink">
+                      ${editItems.reduce((s, li) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0).toFixed(2)}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-1.5">Notes</label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Optional notes for the customer…"
+                  className="w-full px-3 py-2.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-paper-deep flex gap-2 justify-end flex-shrink-0">
+              <Button variant="secondary" size="sm" className="w-auto" onClick={() => setShowEditModal(false)}>Cancel</Button>
+              <Button size="sm" className="w-auto gap-1.5" onClick={saveEdit} disabled={saving}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                {saving ? "Saving…" : "Save Changes"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Send modal */}
       {showSendModal && (

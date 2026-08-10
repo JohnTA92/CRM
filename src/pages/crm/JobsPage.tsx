@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { jobStatusLabel, type JobStatus, type Job } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import { Plus, Search, Clock, ChevronDown, X, Loader2, RefreshCw } from "lucide-react";
@@ -63,6 +64,8 @@ function Field({ label, value, onChange, placeholder, type = "text", required, e
 
 export function JobsPage() {
   const { services } = useServices();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [jobList, setJobList] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,15 +86,18 @@ export function JobsPage() {
   const [price, setPrice] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  useEffect(() => { loadData(); }, []);
+
   useEffect(() => {
-    loadData();
-  }, []);
+    const prefill = (location.state as any)?.prefillCustomerId;
+    if (prefill) { setCustomerId(prefill); setShowModal(true); window.history.replaceState({}, ""); }
+  }, [location.state]);
 
   async function loadData() {
     setLoading(true);
     const [jobRes, custRes] = await Promise.all([
-      supabase.from("jobs").select("*").order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name").eq("archived", false).order("name"),
+      supabase.from("jobs").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
+      supabase.from("customers").select("id, name").eq("business_id", businessId).eq("archived", false).order("name"),
     ]);
     if (jobRes.data) setJobList(jobRes.data.map(rowToJob));
     if (custRes.data) setCustomers(custRes.data);
@@ -133,10 +139,11 @@ export function JobsPage() {
     const { data, error } = await supabase
       .from("jobs")
       .insert({
+        business_id: businessId,
         customer_id: customerId,
         service_type: serviceType,
         title: title.trim(),
-        status: "scheduled",
+        status: scheduledDate ? "scheduled" : "draft",
         scheduled_date: scheduledDate || null,
         scheduled_time: scheduledTime || null,
         duration_minutes: 60,

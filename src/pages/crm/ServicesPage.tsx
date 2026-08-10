@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { invalidateServicesCache } from "@/lib/services";
+import { useAuth } from "@/lib/auth";
 import {
   Plus, X, Loader2, Pencil, Trash2, TriangleAlert, GripVertical,
   Briefcase, CheckCircle2, ChevronRight,
@@ -54,6 +55,8 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
 }
 
 export function ServicesPage() {
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -75,7 +78,7 @@ export function ServicesPage() {
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase.from("services").select("*").order("label");
+    const { data } = await supabase.from("services").select("*").eq("business_id", businessId).order("label");
     if (data) setServices(data);
     setLoading(false);
   }
@@ -134,6 +137,7 @@ export function ServicesPage() {
         description: fDescription.trim() || null,
         color: fColor,
         active: true,
+        business_id: businessId,
       }).select().single();
       if (error) { setSaveError(error.message); setSaving(false); return; }
       if (data) setServices((prev) => [...prev, data].sort((a, b) => a.label.localeCompare(b.label)));

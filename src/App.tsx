@@ -1,5 +1,6 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { ThemeProvider } from "@/lib/theme";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import { Sidebar } from "@/design-system/layout/Sidebar";
 import { DashboardPage } from "@/pages/crm/DashboardPage";
 import { CustomersPage } from "@/pages/crm/CustomersPage";
@@ -18,8 +19,33 @@ import { MediaPage } from "@/pages/crm/MediaPage";
 import { RoutePage } from "@/pages/crm/RoutePage";
 import { CrewPage } from "@/pages/crm/CrewPage";
 import { RevenuePage } from "@/pages/crm/RevenuePage";
+import { SchedulingPage } from "@/pages/crm/SchedulingPage";
 import { CustomerPortalPage } from "@/pages/portal/CustomerPortalPage";
 import { CrewPortalPage } from "@/pages/portal/CrewPortalPage";
+import { LoginPage } from "@/pages/auth/LoginPage";
+import { SignupPage } from "@/pages/auth/SignupPage";
+import { ForgotPasswordPage } from "@/pages/auth/ForgotPasswordPage";
+import { ResetPasswordPage } from "@/pages/auth/ResetPasswordPage";
+import { Loader2 } from "lucide-react";
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper-warm">
+        <Loader2 className="w-6 h-6 animate-spin text-ink-quiet" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  }
+
+  return <>{children}</>;
+}
 
 function NotFound() {
   return (
@@ -50,6 +76,7 @@ function AppLayout() {
           <Route path="/media" element={<MediaPage />} />
           <Route path="/routes" element={<RoutePage />} />
           <Route path="/crew" element={<CrewPage />} />
+          <Route path="/scheduling" element={<SchedulingPage />} />
           <Route path="/revenue" element={<RevenuePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFound />} />
@@ -63,11 +90,26 @@ export default function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/portal/:customerId" element={<CustomerPortalPage />} />
-          <Route path="/crew-portal/:crewId" element={<CrewPortalPage />} />
-          <Route path="/*" element={<AppLayout />} />
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            {/* Public portal routes — no auth required */}
+            <Route path="/portal/:customerId" element={<CustomerPortalPage />} />
+            <Route path="/crew-portal/:crewId" element={<CrewPortalPage />} />
+
+            {/* Auth routes — redirect to dashboard if already signed in */}
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+            {/* Protected CRM routes */}
+            <Route path="/*" element={
+              <RequireAuth>
+                <AppLayout />
+              </RequireAuth>
+            } />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
   );

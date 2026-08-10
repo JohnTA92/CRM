@@ -4,6 +4,7 @@ import { Badge } from "@/design-system/primitives/Badge";
 import { supabase } from "@/lib/supabase";
 import { jobStatusLabel, invoiceStatusLabel } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
+import { useAuth } from "@/lib/auth";
 import { EXPENSE_CATEGORIES } from "@/pages/crm/ExpensesPage";
 import {
   Briefcase, Users, DollarSign, AlertCircle, ArrowRight, Clock,
@@ -26,7 +27,7 @@ function startOf(period: "today" | "wtd" | "mtd" | "qtd"): string {
   if (period === "today") return now.toISOString().split("T")[0];
   if (period === "wtd") {
     const d = new Date(now);
-    d.setDate(d.getDate() - d.getDay());
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     return d.toISOString().split("T")[0];
   }
   if (period === "mtd") return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -116,6 +117,8 @@ function KpiCard({ label, value, sub, icon: Icon, accent, trend }: {
 
 export function DashboardPage() {
   const { services } = useServices();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<"today" | "wtd" | "mtd" | "qtd">("mtd");
 
@@ -125,10 +128,7 @@ export function DashboardPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
 
-  const [monthlyGoal, setMonthlyGoal] = useState<number>(() => {
-    const saved = localStorage.getItem("crm_monthly_goal");
-    return saved ? Number(saved) : 0;
-  });
+  const [monthlyGoal, setMonthlyGoal] = useState<number>(0);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("");
 
@@ -136,18 +136,20 @@ export function DashboardPage() {
 
   async function loadAll() {
     setLoading(true);
-    const [jobRes, invRes, estRes, custRes, expRes] = await Promise.all([
-      supabase.from("jobs").select("*"),
-      supabase.from("invoices").select("*"),
-      supabase.from("estimates").select("*"),
-      supabase.from("customers").select("id, name, archived"),
-      supabase.from("expenses").select("*"),
+    const [jobRes, invRes, estRes, custRes, expRes, settingsRes] = await Promise.all([
+      supabase.from("jobs").select("*").eq("business_id", businessId),
+      supabase.from("invoices").select("*").eq("business_id", businessId),
+      supabase.from("estimates").select("*").eq("business_id", businessId),
+      supabase.from("customers").select("id, name, archived").eq("business_id", businessId),
+      supabase.from("expenses").select("*").eq("business_id", businessId),
+      supabase.from("company_settings").select("monthly_goal").eq("id", businessId).single(),
     ]);
     if (jobRes.data) setJobs(jobRes.data);
     if (invRes.data) setInvoices(invRes.data);
     if (estRes.data) setEstimates(estRes.data);
     if (custRes.data) setCustomers(custRes.data);
     if (expRes.data) setExpenses(expRes.data);
+    if (settingsRes.data?.monthly_goal) setMonthlyGoal(Number(settingsRes.data.monthly_goal));
     setLoading(false);
   }
 
@@ -190,11 +192,15 @@ export function DashboardPage() {
   });
 
   // ── Pipeline strip ──
-  const quotedJobs = jobs.filter((j) => j.status === "quoted");
   const scheduledJobs = jobs.filter((j) => ["scheduled", "in-progress"].includes(j.status));
   const unpaidInvoices = invoices.filter((i) => ["sent", "overdue"].includes(i.status));
-  const quotedValue = estimates.filter((e) => ["sent", "draft"].includes(e.status))
-    .reduce((s: number, e: any) => s + (e.total ?? 0), 0);
+  const pendingEstimates = estimates.filter((e) => ["draft", "sent"].includes(e.status));
+  const quotedValue = pendingEstimates
+    .reduce((s: number, e: any) => {
+      const lineItems: any[] = e.line_items ?? [];
+      const total = lineItems.reduce((ls: number, li: any) => ls + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
+      return s + (e.total ?? total ?? 0);
+    }, 0);
   const unpaidValue = unpaidInvoices.reduce((s: number, i: any) => s + (i.total ?? 0), 0);
 
   // ── Estimate conversion ──
@@ -204,12 +210,10 @@ export function DashboardPage() {
   const closeRate = sentEstimates.length > 0 ? Math.round((wonEstimates.length / sentEstimates.length) * 100) : 0;
 
   // ── Invoice aging ──
-  const aging30 = unpaidInvoices.filter((i) => daysBetween(i.created_at?.split("T")[0], today) < 30);
-  const aging60 = unpaidInvoices.filter((i) => {
-    const d = daysBetween(i.created_at?.split("T")[0], today);
-    return d >= 30 && d < 60;
-  });
-  const aging60plus = unpaidInvoices.filter((i) => daysBetween(i.created_at?.split("T")[0], today) >= 60);
+  const agingBase = (i: any) => (i.sent_at ?? i.due_at ?? i.created_at)?.split("T")[0] ?? today;
+  const aging30 = unpaidInvoices.filter((i) => daysBetween(agingBase(i), today) < 30);
+  const aging60 = unpaidInvoices.filter((i) => { const d = daysBetween(agingBase(i), today); return d >= 30 && d < 60; });
+  const aging60plus = unpaidInvoices.filter((i) => daysBetween(agingBase(i), today) >= 60);
 
   // ── Smart alerts ──
   const alerts: { type: "warn" | "error" | "info"; text: string; link: string }[] = [];
@@ -225,6 +229,9 @@ export function DashboardPage() {
   const pendingEsts = estimates.filter((e) => e.status === "sent");
   if (pendingEsts.length > 0)
     alerts.push({ type: "info", text: `${pendingEsts.length} estimate${pendingEsts.length > 1 ? "s" : ""} awaiting customer approval`, link: "/estimates" });
+  const draftEsts = estimates.filter((e) => e.status === "draft");
+  if (draftEsts.length > 0)
+    alerts.push({ type: "warn", text: `${draftEsts.length} draft estimate${draftEsts.length > 1 ? "s" : ""} not yet sent`, link: "/estimates" });
 
   // ── Avg by service type ──
   const serviceStats: Record<string, { count: number; revenue: number }> = {};
@@ -250,11 +257,11 @@ export function DashboardPage() {
   const goalPct = monthlyGoal > 0 ? Math.min(100, Math.round((mtdRevenue / monthlyGoal) * 100)) : 0;
   const goalGap = monthlyGoal > 0 ? Math.max(0, monthlyGoal - mtdRevenue) : 0;
 
-  function saveGoal() {
-    const val = parseInt(goalInput.replace(/\D/g, ""), 10);
+  async function saveGoal() {
+    const val = Math.round(parseFloat(goalInput.replace(/[^0-9.]/g, "")));
     if (!isNaN(val) && val > 0) {
       setMonthlyGoal(val);
-      localStorage.setItem("crm_monthly_goal", String(val));
+      await supabase.from("company_settings").upsert({ id: businessId, monthly_goal: val });
     }
     setEditingGoal(false);
   }
@@ -315,7 +322,7 @@ export function DashboardPage() {
         </div>
         <div className="grid grid-cols-4 divide-x divide-paper-deep">
           {([
-            { label: "Quotes Out", count: quotedJobs.length, value: quotedValue, color: "text-[#e65100]", link: "/estimates" },
+            { label: "Pending Estimates", count: pendingEstimates.length, value: quotedValue, color: "text-[#e65100]", link: "/estimates" },
             { label: "Jobs Scheduled", count: scheduledJobs.length, value: null, color: "text-[#1565c0]", link: "/jobs" },
             { label: "Awaiting Payment", count: unpaidInvoices.length, value: unpaidValue, color: "text-[#f57c00]", link: "/invoices" },
             { label: `Collected (${PERIOD_LABELS[period]})`, count: periodPaid.length, value: revenue, color: "text-[#2e7d32]", link: "/invoices" },
@@ -737,7 +744,7 @@ export function DashboardPage() {
           {[
             { label: "Total customers", value: customers.filter((c: any) => !c.archived).length },
             { label: "Jobs scheduled", value: scheduledJobs.length },
-            { label: "Pending estimates", value: pendingEsts.length },
+            { label: "Pending estimates", value: pendingEstimates.length },
             { label: "Unpaid invoices", value: unpaidInvoices.length },
           ].map(({ label, value }) => (
             <div key={label} className="flex-1 px-5 py-4 text-center">

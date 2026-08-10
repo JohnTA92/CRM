@@ -2,9 +2,10 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
-import { getJobsForCustomer, type Customer } from "@/data/crm";
+import { type Customer } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import { Search, Plus, ChevronRight, MapPin, Phone, Mail, X, User, Loader2 } from "lucide-react";
 
 function serviceTypeBadge(type: string) {
@@ -60,7 +61,10 @@ function Field({
 
 export function CustomersPage() {
   const { services } = useServices();
+  const { business } = useAuth();
+  const businessId = business?.id ?? "";
   const [customerList, setCustomerList] = useState<Customer[]>([]);
+  const [activeJobCounts, setActiveJobCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -75,14 +79,19 @@ export function CustomersPage() {
 
   async function loadCustomers() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("customers")
-      .select("*")
-      .eq("archived", false)
-      .order("created_at", { ascending: false });
-
-    if (!error && data) {
-      setCustomerList(data.map(rowToCustomer));
+    const [custRes, jobRes] = await Promise.all([
+      supabase.from("customers").select("*").eq("business_id", businessId).eq("archived", false).order("created_at", { ascending: false }),
+      supabase.from("jobs").select("customer_id, status").eq("business_id", businessId).in("status", ["scheduled", "in-progress", "quoted"]),
+    ]);
+    if (!custRes.error && custRes.data) {
+      setCustomerList(custRes.data.map(rowToCustomer));
+    }
+    if (jobRes.data) {
+      const counts: Record<string, number> = {};
+      for (const j of jobRes.data) {
+        counts[j.customer_id] = (counts[j.customer_id] ?? 0) + 1;
+      }
+      setActiveJobCounts(counts);
     }
     setLoading(false);
   }
@@ -125,6 +134,7 @@ export function CustomersPage() {
     const { data, error } = await supabase
       .from("customers")
       .insert({
+        business_id: businessId,
         name: `${form.firstName.trim()} ${form.lastName.trim()}`,
         email: form.email.trim() || null,
         phone: form.phone.trim(),
@@ -212,10 +222,7 @@ export function CustomersPage() {
         ) : (
           <div className="divide-y divide-paper-deep">
             {filtered.map((customer) => {
-              const customerJobs = getJobsForCustomer(customer.id);
-              const activeCount = customerJobs.filter((j) =>
-                ["scheduled", "in-progress", "quoted"].includes(j.status),
-              ).length;
+              const activeCount = activeJobCounts[customer.id] ?? 0;
 
               return (
                 <Link

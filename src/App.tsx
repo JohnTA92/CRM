@@ -26,11 +26,17 @@ import { LoginPage } from "@/pages/auth/LoginPage";
 import { SignupPage } from "@/pages/auth/SignupPage";
 import { ForgotPasswordPage } from "@/pages/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "@/pages/auth/ResetPasswordPage";
+import { StripeCallbackPage } from "@/pages/auth/StripeCallbackPage";
+import { SubscriptionGate } from "@/components/SubscriptionGate";
+import { OnboardingWizard } from "@/pages/onboarding/OnboardingWizard";
+import { AdminPage } from "@/pages/admin/AdminPage";
 import { Loader2 } from "lucide-react";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
+
+  if (DEV_MODE && localStorage.getItem("dev_bypass") === "true") return <>{children}</>;
 
   if (loading) {
     return (
@@ -86,12 +92,28 @@ function AppLayout() {
   );
 }
 
+const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
+
+function OnboardingOrApp() {
+  const { business } = useAuth();
+  if (!DEV_MODE && !business?.onboarding_complete) return <OnboardingWizard />;
+  return (
+    <SubscriptionGate>
+      <AppLayout />
+    </SubscriptionGate>
+  );
+}
+
 export default function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
         <AuthProvider>
           <Routes>
+            {/* Admin panel — separate from the main app, no subscription gate */}
+            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/admin/*" element={<AdminPage />} />
+
             {/* Public portal routes — no auth required */}
             <Route path="/portal/:customerId" element={<CustomerPortalPage />} />
             <Route path="/crew-portal/:crewId" element={<CrewPortalPage />} />
@@ -102,10 +124,17 @@ export default function App() {
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-            {/* Protected CRM routes */}
+            {/* Stripe Connect return — needs auth context but not the full app shell */}
+            <Route path="/stripe/callback" element={
+              <RequireAuth>
+                <StripeCallbackPage />
+              </RequireAuth>
+            } />
+
+            {/* Protected CRM routes — onboarding first, then subscription gate, then app */}
             <Route path="/*" element={
               <RequireAuth>
-                <AppLayout />
+                <OnboardingOrApp />
               </RequireAuth>
             } />
           </Routes>

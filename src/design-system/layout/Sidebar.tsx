@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
+import { SupportModal } from "@/components/SupportModal";
 import {
   LayoutDashboard,
   Users,
@@ -21,6 +22,7 @@ import {
   TrendingUp,
   CalendarCheck,
   LogOut,
+  LifeBuoy,
 } from "lucide-react";
 
 const navItems = [
@@ -44,6 +46,7 @@ export function Sidebar() {
   const { user, business, signOut } = useAuth();
   const dark = theme === "dark";
   const [businessName, setBusinessName] = useState("My Business");
+  const [supportOpen, setSupportOpen] = useState(false);
 
   useEffect(() => {
     if (business?.name) { setBusinessName(business.name); return; }
@@ -61,6 +64,7 @@ export function Sidebar() {
   const ownerSub = dark ? "text-white/40" : "text-ink-quiet";
 
   return (
+    <>
     <aside className={cn("fixed top-0 left-0 h-screen w-56 flex flex-col z-40", bg)}>
       <div className={cn("flex items-center gap-2.5 px-5 py-5 border-b", divider)}>
         <div className="w-7 h-7 rounded-lg bg-moss flex items-center justify-center flex-shrink-0">
@@ -92,6 +96,16 @@ export function Sidebar() {
       </nav>
 
       <div className={cn("px-3 py-4 border-t", divider)}>
+        <button
+          onClick={() => setSupportOpen(true)}
+          className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors duration-150 w-full text-left",
+            navInactive,
+          )}
+        >
+          <LifeBuoy className="w-4 h-4 flex-shrink-0" />
+          Get Help
+        </button>
         <NavLink
           to="/settings"
           className={({ isActive }) =>
@@ -124,5 +138,8 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+
+    <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
+    </>
   );
 }

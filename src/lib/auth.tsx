@@ -6,6 +6,14 @@ interface Business {
   id: string;
   name: string;
   owner_id: string;
+  onboarding_complete: boolean;
+  subscription_status: string | null;
+  subscription_id: string | null;
+  trial_ends_at: string | null;
+  stripe_customer_id: string | null;
+  stripe_account_id: string | null;
+  stripe_onboarding_complete: boolean;
+  stripe_charges_enabled: boolean;
 }
 
 interface AuthContextValue {

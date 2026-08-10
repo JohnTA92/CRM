@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
-import { Leaf, Loader2, AlertCircle } from "lucide-react";
+import { Leaf, Loader2, AlertCircle, FlaskConical } from "lucide-react";
+
+const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
 export function LoginPage() {
   const { signIn } = useAuth();
@@ -95,6 +97,20 @@ export function LoginPage() {
             Create one free
           </Link>
         </p>
+
+        {DEV_MODE && (
+          <div className="mt-4 border border-dashed border-[#f59e0b] rounded-xl p-4 bg-[#fffbeb]">
+            <p className="text-[11px] font-semibold text-[#92400e] uppercase tracking-wide mb-2.5 flex items-center gap-1.5">
+              <FlaskConical className="w-3.5 h-3.5" /> Dev Mode
+            </p>
+            <button
+              onClick={() => { localStorage.setItem("dev_bypass", "true"); navigate(from, { replace: true }); }}
+              className="w-full py-2 rounded-lg text-[13px] font-semibold bg-[#f59e0b] text-white hover:bg-[#d97706] transition-colors"
+            >
+              Skip Login → Enter App
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,7 +2,9 @@ import { useState, useEffect } from "react";
 import { useTheme } from "@/lib/theme";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
-import { Sun, Moon, Check, CreditCard, ExternalLink, AlertCircle, CheckCircle2 } from "lucide-react";
+import { startConnectOnboarding, refreshConnectStatus } from "@/lib/stripe";
+import { openBillingPortal, subscriptionLabel, isSubscriptionActive } from "@/lib/billing";
+import { Sun, Moon, Check, CreditCard, ExternalLink, AlertCircle, CheckCircle2, Loader2, RefreshCw, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function ThemeOption({
@@ -51,6 +53,14 @@ function ThemeOption({
   );
 }
 
+type StripeStatus = "unconnected" | "pending" | "active";
+
+function stripeStatus(business: { stripe_account_id?: string | null; stripe_onboarding_complete?: boolean; stripe_charges_enabled?: boolean } | null): StripeStatus {
+  if (!business?.stripe_account_id) return "unconnected";
+  if (business.stripe_charges_enabled) return "active";
+  return "pending";
+}
+
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { business } = useAuth();
@@ -59,30 +69,63 @@ export function SettingsPage() {
   const [savingName, setSavingName] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
 
-  const [stripeEnabled, setStripeEnabled] = useState(false);
-  const [stripePubKey, setStripePubKey] = useState("");
-  const [savingStripe, setSavingStripe] = useState(false);
-  const [stripeSaved, setStripeSaved] = useState(false);
+  const [connectStatus, setConnectStatus] = useState<StripeStatus>(() => stripeStatus(business ?? null));
+  const [connectLoading, setConnectLoading] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingError, setBillingError] = useState("");
+  const subStatus = (business as any)?.subscription_status ?? null;
+  const subLabel = subscriptionLabel(subStatus);
+  const subActive = isSubscriptionActive(subStatus);
+  const trialEndsAt = (business as any)?.trial_ends_at as string | null;
 
   useEffect(() => {
-    supabase.from("company_settings").select("business_name, stripe_enabled, stripe_publishable_key").eq("id", businessId).single()
+    setConnectStatus(stripeStatus(business ?? null));
+  }, [business]);
+
+  // Handle ?stripe=refresh redirect from Stripe when the account link expires
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("stripe") === "refresh") {
+      window.history.replaceState({}, "", "/settings");
+      handleConnectOnboard();
+    }
+  }, []);
+
+  useEffect(() => {
+    supabase.from("company_settings").select("business_name").eq("id", businessId).single()
       .then(({ data }) => {
         if (data?.business_name) setBusinessName(data.business_name);
-        if (data?.stripe_enabled) setStripeEnabled(data.stripe_enabled);
-        if (data?.stripe_publishable_key) setStripePubKey(data.stripe_publishable_key);
       });
   }, [businessId]);
 
-  async function saveStripe() {
-    setSavingStripe(true);
-    await supabase.from("company_settings").upsert({
-      id: businessId,
-      stripe_enabled: stripeEnabled,
-      stripe_publishable_key: stripePubKey.trim() || null,
-    });
-    setSavingStripe(false);
-    setStripeSaved(true);
-    setTimeout(() => setStripeSaved(false), 2000);
+  async function handleConnectOnboard() {
+    setConnectLoading(true);
+    setConnectError("");
+    const { url, error } = await startConnectOnboarding();
+    setConnectLoading(false);
+    if (error) { setConnectError(error); return; }
+    if (url) window.location.href = url;
+  }
+
+  async function handleRefreshStatus() {
+    if (!businessId) return;
+    setRefreshing(true);
+    const { charges_enabled, error } = await refreshConnectStatus(businessId);
+    setRefreshing(false);
+    if (error) { setConnectError(error); return; }
+    setConnectStatus(charges_enabled ? "active" : "pending");
+  }
+
+  async function handleBillingPortal() {
+    setBillingLoading(true);
+    setBillingError("");
+    const { url, error } = await openBillingPortal();
+    setBillingLoading(false);
+    if (error) { setBillingError(error); return; }
+    if (url) window.location.href = url;
   }
 
   async function saveBusinessName() {
@@ -128,110 +171,171 @@ export function SettingsPage() {
           <h2 className="text-[15px] font-semibold text-ink">Payments</h2>
         </div>
         <p className="text-[13px] text-ink-quiet mb-4">
-          Accept online card payments via Stripe. Customers can pay invoices directly from their portal.
+          Connect your Stripe account to accept online card payments. Each business keeps their own bank account — funds go directly to you.
         </p>
 
         <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
-          {/* Enable toggle */}
+          {/* Status bar */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-paper-deep">
-            <div>
-              <p className="text-[14px] font-semibold text-ink">Enable Stripe Payments</p>
-              <p className="text-[12px] text-ink-quiet mt-0.5">Show "Pay Online" button on invoices and customer portal</p>
-            </div>
-            <button
-              onClick={() => setStripeEnabled((v) => !v)}
-              className={cn(
-                "relative w-11 h-6 rounded-full transition-colors duration-200 flex-shrink-0",
-                stripeEnabled ? "bg-moss" : "bg-paper-dark"
-              )}
-            >
-              <span className={cn(
-                "absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200",
-                stripeEnabled ? "translate-x-5" : "translate-x-0.5"
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-2.5 h-2.5 rounded-full flex-shrink-0",
+                connectStatus === "active" ? "bg-[#22c55e]" :
+                connectStatus === "pending" ? "bg-[#f59e0b]" : "bg-paper-dark"
               )} />
-            </button>
+              <div>
+                <p className="text-[14px] font-semibold text-ink">
+                  {connectStatus === "active" && "Stripe Connected"}
+                  {connectStatus === "pending" && "Stripe — Verification Pending"}
+                  {connectStatus === "unconnected" && "Not Connected"}
+                </p>
+                <p className="text-[12px] text-ink-quiet mt-0.5">
+                  {connectStatus === "active" && "You can accept card payments on invoices."}
+                  {connectStatus === "pending" && "Your account was created but Stripe needs more info before you can accept payments."}
+                  {connectStatus === "unconnected" && "Connect a Stripe account to enable online invoice payments."}
+                </p>
+              </div>
+            </div>
+            {connectStatus === "active" && (
+              <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[#16a34a] bg-[#f0fdf4] border border-[#bbf7d0] px-2.5 py-1 rounded-full">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Active
+              </span>
+            )}
           </div>
 
-          {/* Publishable key */}
+          {/* Action area */}
           <div className="px-5 py-4 border-b border-paper-deep">
-            <label className="block text-[12px] font-semibold text-ink-quiet mb-1.5">
-              Stripe Publishable Key
-            </label>
-            <input
-              value={stripePubKey}
-              onChange={(e) => setStripePubKey(e.target.value)}
-              placeholder="pk_live_… or pk_test_…"
-              className="w-full px-3 py-2.5 text-[13px] font-mono border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink transition-colors"
-            />
-            <p className="text-[11px] text-ink-quiet mt-1.5">
-              Find this in your{" "}
-              <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer"
-                className="text-accent hover:underline inline-flex items-center gap-0.5">
-                Stripe Dashboard <ExternalLink className="w-3 h-3" />
-              </a>
-              {" "}under Developers → API keys.
-            </p>
+            {connectStatus === "unconnected" && (
+              <button
+                onClick={handleConnectOnboard}
+                disabled={connectLoading}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-semibold bg-[#635bff] text-white hover:bg-[#4f46e5] disabled:opacity-50 transition-colors"
+              >
+                {connectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                {connectLoading ? "Redirecting to Stripe…" : "Connect with Stripe"}
+              </button>
+            )}
+            {connectStatus === "pending" && (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleConnectOnboard}
+                  disabled={connectLoading}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-semibold bg-[#635bff] text-white hover:bg-[#4f46e5] disabled:opacity-50 transition-colors"
+                >
+                  {connectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                  {connectLoading ? "Redirecting…" : "Complete Stripe Setup"}
+                </button>
+                <button
+                  onClick={handleRefreshStatus}
+                  disabled={refreshing}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-semibold border border-paper-deep text-ink hover:bg-paper-warm disabled:opacity-50 transition-colors"
+                >
+                  <RefreshCw className={cn("w-4 h-4", refreshing && "animate-spin")} />
+                  Refresh Status
+                </button>
+              </div>
+            )}
+            {connectStatus === "active" && (
+              <button
+                onClick={handleRefreshStatus}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-medium border border-paper-deep text-ink-quiet hover:text-ink hover:bg-paper-warm disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
+                Refresh
+              </button>
+            )}
+            {connectError && (
+              <p className="text-[12px] text-[#dc2626] mt-2 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                {connectError}
+              </p>
+            )}
           </div>
 
-          {/* Secret key instructions */}
-          <div className="px-5 py-4 bg-[#fffbeb] border-b border-paper-deep">
+          {/* Setup instructions for admins */}
+          <div className="px-5 py-4 bg-[#fffbeb]">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-[#d97706] flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-[12px] font-semibold text-[#92400e]">Secret key goes in Supabase, not here</p>
-                <p className="text-[12px] text-[#92400e] mt-1">
-                  For security, your Stripe secret key must be added as a Supabase secret:
-                </p>
-                <ol className="text-[12px] text-[#92400e] mt-2 space-y-1 list-decimal list-inside">
-                  <li>Go to Supabase Dashboard → Edge Functions → Secrets</li>
-                  <li>Add <code className="bg-[#fef3c7] px-1 rounded font-mono">STRIPE_SECRET_KEY</code> = your <code className="bg-[#fef3c7] px-1 rounded font-mono">sk_live_…</code> key</li>
-                  <li>Add <code className="bg-[#fef3c7] px-1 rounded font-mono">STRIPE_WEBHOOK_SECRET</code> = your webhook signing secret</li>
-                  <li>Add <code className="bg-[#fef3c7] px-1 rounded font-mono">APP_URL</code> = your app's public URL</li>
+                <p className="text-[12px] font-semibold text-[#92400e]">Platform setup required (one-time)</p>
+                <ol className="text-[12px] text-[#92400e] mt-1.5 space-y-1 list-decimal list-inside">
+                  <li>Add <code className="bg-[#fef3c7] px-1 rounded font-mono">STRIPE_SECRET_KEY</code> to Supabase Edge Function secrets</li>
+                  <li>Add <code className="bg-[#fef3c7] px-1 rounded font-mono">STRIPE_WEBHOOK_SECRET</code> and <code className="bg-[#fef3c7] px-1 rounded font-mono">APP_URL</code></li>
+                  <li>Deploy: <code className="bg-[#fef3c7] px-1 rounded font-mono">supabase functions deploy --all</code></li>
+                  <li>Add webhook in Stripe Dashboard pointing to your Supabase functions URL</li>
                 </ol>
               </div>
             </div>
           </div>
-
-          {/* Webhook instructions */}
-          <div className="px-5 py-4 bg-paper-warm border-b border-paper-deep">
-            <p className="text-[12px] font-semibold text-ink mb-1.5">Webhook setup (for automatic paid status)</p>
-            <p className="text-[12px] text-ink-quiet mb-2">
-              In Stripe Dashboard → Developers → Webhooks, add an endpoint:
-            </p>
-            <code className="block text-[11px] font-mono bg-white border border-paper-deep rounded-lg px-3 py-2 text-ink break-all">
-              https://ekfnjswozausgebvbwew.supabase.co/functions/v1/stripe-webhook
-            </code>
-            <p className="text-[11px] text-ink-quiet mt-1.5">Listen for: <code className="font-mono">checkout.session.completed</code></p>
-          </div>
-
-          {/* Deploy instructions */}
-          <div className="px-5 py-4 bg-paper-warm">
-            <p className="text-[12px] font-semibold text-ink mb-1.5">Deploy the Edge Functions</p>
-            <p className="text-[12px] text-ink-quiet mb-2">Run these once in your project terminal:</p>
-            <code className="block text-[11px] font-mono bg-white border border-paper-deep rounded-lg px-3 py-2 text-ink">
-              npx supabase functions deploy create-payment-session{"\n"}
-              npx supabase functions deploy stripe-webhook
-            </code>
-          </div>
         </div>
+      </section>
 
-        <div className="flex items-center justify-between mt-4">
-          {stripeEnabled && stripePubKey.startsWith("pk_") ? (
-            <span className="flex items-center gap-1.5 text-[12px] text-[#2e7d32] font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Ready — payments will show on invoices
-            </span>
-          ) : (
-            <span className="text-[12px] text-ink-quiet">
-              {stripeEnabled ? "Enter a valid publishable key to activate" : "Payments are disabled"}
-            </span>
-          )}
-          <button
-            onClick={saveStripe}
-            disabled={savingStripe}
-            className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors flex items-center gap-1.5"
-          >
-            {stripeSaved ? <><Check className="w-3.5 h-3.5" /> Saved</> : savingStripe ? "Saving…" : "Save"}
-          </button>
+      <section className="mb-8">
+        <div className="flex items-center gap-2 mb-1">
+          <Zap className="w-4 h-4 text-ink-quiet" />
+          <h2 className="text-[15px] font-semibold text-ink">Subscription</h2>
+        </div>
+        <p className="text-[13px] text-ink-quiet mb-4">Manage your FieldCRM subscription and billing.</p>
+
+        <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-paper-deep">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-2.5 h-2.5 rounded-full flex-shrink-0",
+                subStatus === "active" ? "bg-[#22c55e]" :
+                subStatus === "trialing" ? "bg-[#3b82f6]" :
+                subStatus === "past_due" ? "bg-[#f59e0b]" : "bg-paper-dark"
+              )} />
+              <div>
+                <p className="text-[14px] font-semibold text-ink">{subLabel}</p>
+                {subStatus === "trialing" && trialEndsAt && (
+                  <p className="text-[12px] text-ink-quiet mt-0.5">
+                    Trial ends {new Date(trialEndsAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                  </p>
+                )}
+                {subStatus === "past_due" && (
+                  <p className="text-[12px] text-[#dc2626] mt-0.5">Payment failed — update your billing info to restore access</p>
+                )}
+                {!subStatus && (
+                  <p className="text-[12px] text-ink-quiet mt-0.5">$49/month · 14-day free trial included</p>
+                )}
+              </div>
+            </div>
+            {subActive && (
+              <span className={cn(
+                "text-[12px] font-semibold px-2.5 py-1 rounded-full border",
+                subStatus === "trialing"
+                  ? "text-[#1d4ed8] bg-[#eff6ff] border-[#bfdbfe]"
+                  : "text-[#16a34a] bg-[#f0fdf4] border-[#bbf7d0]",
+              )}>
+                {subStatus === "trialing" ? "Trial" : "Active"}
+              </span>
+            )}
+          </div>
+
+          <div className="px-5 py-4">
+            {billingError && (
+              <p className="text-[12px] text-[#dc2626] mb-3 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                {billingError}
+              </p>
+            )}
+            {subActive ? (
+              <button
+                onClick={handleBillingPortal}
+                disabled={billingLoading}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-semibold border border-paper-deep text-ink hover:bg-paper-warm disabled:opacity-50 transition-colors"
+              >
+                {billingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                {billingLoading ? "Opening…" : "Manage Billing"}
+              </button>
+            ) : (
+              <p className="text-[13px] text-ink-quiet">
+                You currently don't have an active subscription. You'll see this section once you subscribe.
+              </p>
+            )}
+          </div>
         </div>
       </section>
 

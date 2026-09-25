@@ -1,3 +1,4 @@
+import { DocumentButton } from "@/components/CustomerDocument";
 import { isClosedJob } from "@/lib/scheduling";
 import { balanceDue, sumMoney } from "@/lib/money";
 import { supabase } from "@/lib/supabase";
@@ -468,6 +469,7 @@ function CustomerPortalPageContent() {
                       <div className="flex-1 min-w-0">
                         <p className="text-[14px] font-medium text-ink">${Number(e.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                         <p className="text-[12px] text-ink-quiet">{e.sent_at ? `Sent ${e.sent_at.split("T")[0]}` : `Created ${e.created_at?.split("T")[0]}`}</p>
+                        <DocumentButton client={client} kind="estimate" id={e.id} readOnly={preview} onDecision={() => customerId && load(customerId)} />
                         {e.notes && <p className="text-[12px] text-ink-quiet mt-0.5">{e.notes}</p>}
                       </div>
                       <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full capitalize ${statusColor(e.status)}`}>
@@ -492,6 +494,7 @@ function CustomerPortalPageContent() {
                         <p className="text-[14px] font-medium text-ink">${Number(inv.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                         <p className="text-[12px] text-ink-quiet">Paid: ${Number(inv.paid_total ?? 0).toFixed(2)} · Balance: ${balanceDue(inv).toFixed(2)}</p>
                         {inv.due_at && <p className="text-[12px] text-ink-quiet">Due {inv.due_at}</p>}
+                        <DocumentButton client={client} kind="invoice" id={inv.id} readOnly={preview} />
                         {inv.notes && <p className="text-[12px] text-ink-quiet mt-0.5">{inv.notes}</p>}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">

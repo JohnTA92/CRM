@@ -1,3 +1,4 @@
+import { DocumentButton } from "@/components/CustomerDocument";
 import { normalizeLineItems, previewTotal, lineAmount } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
@@ -163,6 +164,7 @@ export function EstimateDetailPage() {
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-[20px] font-semibold text-ink">Estimate</h1>
+          <DocumentButton client={supabase} kind="estimate" id={estimate.id} />
           <p className="text-[13px] text-ink-quiet mt-1">
             {customer?.name} · Created {estimate.created_at?.split("T")[0]}
           </p>
@@ -203,7 +205,8 @@ export function EstimateDetailPage() {
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        {estimate.status === "draft" && <Button size="sm" variant="secondary" className="w-auto" disabled={statusSaving} onClick={() => updateStatus("sent")}>Publish to customer portal</Button>}
         {(estimate.status === "draft" || estimate.status === "sent") && (
           <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowSendModal(true)}>
             <Mail className="w-3.5 h-3.5" /> Email to Customer

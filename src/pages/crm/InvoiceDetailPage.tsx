@@ -1,3 +1,4 @@
+import { DocumentButton } from "@/components/CustomerDocument";
 import { normalizeLineItems, previewTotal, lineAmount, moneyCents, balanceDue as invoiceBalance } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
@@ -199,6 +200,7 @@ export function InvoiceDetailPage() {
       <div className="flex items-start justify-between mb-2">
         <div>
           <h1 className="text-[20px] font-semibold text-ink">Invoice</h1>
+          <DocumentButton client={supabase} kind="invoice" id={invoice.id} />
           <p className="text-[13px] text-ink-quiet mt-1">{customer?.name}</p>
         </div>
         <Badge variant={invStatusBadge(invoice.status)}>{invoiceStatusLabel(invoice.status)}</Badge>

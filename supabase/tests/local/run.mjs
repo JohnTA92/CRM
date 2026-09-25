@@ -45,6 +45,9 @@ await db.exec(readFileSync(root+'/supabase/migrations/20260925050149_job_service
 await db.exec(readFileSync(root+'/supabase/tests/service_properties.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/tests/scheduling_integrity.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/tests/employee_access.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/migrations/20260925051727_customer_documents_and_decisions.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/customer_documents.sql','utf8'));
+console.log('PASS: document authorization, customer decisions, expiry, stale revisions, retry and immutable evidence.');
 console.log('PASS: property ownership, address snapshots, recurrence, portal and protected deletion.');
 console.log('PASS: employee invitations, least-privilege jobs, shifts, storage, location sessions and revocation.');
 console.log('PASS: recurring rollover/retry, calendar approvals, cancellation and schedule validation.');

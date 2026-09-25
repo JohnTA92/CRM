@@ -11,7 +11,8 @@
     "test:security": "node supabase/tests/local/run.mjs",
     "test:finance": "node --experimental-strip-types supabase/tests/local/money.test.mjs && node supabase/tests/local/run.mjs",
     "test:scheduling": "node --experimental-strip-types supabase/tests/local/scheduling.test.mjs && node supabase/tests/local/run.mjs",
-    "test:employee": "node --experimental-strip-types supabase/tests/local/employee.test.mjs && node supabase/tests/local/run.mjs"
+    "test:employee": "node --experimental-strip-types supabase/tests/local/employee.test.mjs && node supabase/tests/local/run.mjs",
+    "test:documents": "node --experimental-strip-types supabase/tests/local/documents.test.mjs && node supabase/tests/local/run.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.2",
@@ -24,6 +25,7 @@
     "clsx": "^2.1.1",
     "framer-motion": "^11.16.0",
     "lucide-react": "^0.469.0",
+    "pdfmake": "0.3.11",
     "pigeon-maps": "^0.22.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

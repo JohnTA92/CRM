@@ -41,7 +41,6 @@ const navItems = [
   { to: "/media", icon: Camera, label: "Job Media" },
   { to: "/routes", icon: Navigation, label: "Routes" },
   { to: "/crew", icon: HardHat, label: "Crew" },
-  { to: "/employee-preview", icon: Users, label: "Employee Hub" },
   { to: "/scheduling", icon: CalendarCheck, label: "Crew Board" },
   { to: "/revenue", icon: TrendingUp, label: "Revenue" },
 ];

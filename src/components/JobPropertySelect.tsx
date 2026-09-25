@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { AlertCircle } from "lucide-react";
 
 const address = (row: any) => [row?.address, row?.city, row?.state, row?.zip].filter(Boolean).join(", ");
 
@@ -37,9 +38,16 @@ export function JobPropertySelect({ businessId, customerId, value, onChange }: {
       {value && !properties.some(p => p.id === value) && <option value={value}>Saved property {loading ? "— loading…" : "— unavailable"}</option>}
       {properties.map(p => <option key={p.id} value={p.id} disabled={!address(p)}>{p.label} — {address(p) || "Add an address first"}</option>)}
     </select>
-    {error && <p role="alert" className="text-sm text-red-700">Could not load properties. <button type="button" className="underline" onClick={() => setAttempt(v => v + 1)}>Retry</button></p>}
-    {customerId && <Link className="text-xs underline" to={`/customers/${customerId}`} target="_blank" rel="noopener noreferrer">Manage this customer’s properties</Link>}
-    {customerId && <button type="button" className="text-xs underline ml-3" onClick={() => setAttempt(v => v + 1)}>Refresh properties</button>}
-    <p className="text-xs text-ink-quiet">The service address is saved with the job. Saving job edits refreshes it from the selected property or main address.</p>
+    {error && (
+      <p role="alert" className="text-[12px] text-[#dc2626] flex items-center gap-1.5">
+        <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> Could not load properties.
+        <button type="button" className="underline font-medium" onClick={() => setAttempt(v => v + 1)}>Retry</button>
+      </p>
+    )}
+    <div className="flex items-center gap-3 flex-wrap">
+      {customerId && <Link className="text-[11px] text-ink-quiet hover:text-ink transition-colors" to={`/customers/${customerId}`} target="_blank" rel="noopener noreferrer">Manage this customer's properties</Link>}
+      {customerId && <button type="button" className="text-[11px] text-ink-quiet hover:text-ink transition-colors" onClick={() => setAttempt(v => v + 1)}>Refresh properties</button>}
+    </div>
+    <p className="text-[11px] text-ink-quiet">The service address is saved with the job. Saving job edits refreshes it from the selected property or main address.</p>
   </div>;
 }

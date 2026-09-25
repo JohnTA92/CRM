@@ -89,6 +89,7 @@ function AppLayout() {
           <Route path="/media" element={<MediaPage />} />
           <Route path="/routes" element={<RoutePage />} />
           <Route path="/crew" element={<CrewPage />} />
+          <Route path="/employee-preview" element={<Navigate to="/crew" replace />} />
           <Route path="/scheduling" element={<SchedulingPage />} />
           <Route path="/revenue" element={<RevenuePage />} />
           <Route path="/settings" element={<SettingsPage />} />
@@ -136,7 +137,6 @@ export default function App() {
               </RequireAuth>
             } />
 
-            <Route path="/employee-preview" element={<RequireAuth allowDevBypass={false}><EmployeePage preview /></RequireAuth>} />
             <Route path="/employee" element={<EmployeePage />} />
             {/* Public portal routes — no auth required */}
             <Route path="/portal/:customerId" element={<CustomerPortalPage />} />

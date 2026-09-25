@@ -8,6 +8,11 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { Search, Plus, ChevronRight, MapPin, Phone, Mail, X, User, Loader2 } from "lucide-react";
 
+interface CustomerMeta {
+  totalSpend: number;
+  lastActivity: string | null;
+}
+
 function serviceTypeBadge(type: string) {
   const map: Record<string, "success" | "default" | "accent" | "gold"> = {
     lawn: "success",
@@ -61,10 +66,11 @@ function Field({
 
 export function CustomersPage() {
   const { services } = useServices();
-  const { business } = useAuth();
+  const { business, loading: authLoading } = useAuth();
   const businessId = business?.id ?? "";
   const [customerList, setCustomerList] = useState<Customer[]>([]);
   const [activeJobCounts, setActiveJobCounts] = useState<Record<string, number>>({});
+  const [customerMeta, setCustomerMeta] = useState<Record<string, CustomerMeta>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -74,24 +80,57 @@ export function CustomersPage() {
   const [errors, setErrors] = useState<Partial<FormState>>({});
 
   useEffect(() => {
-    loadCustomers();
-  }, []);
+    if (businessId || !authLoading) loadCustomers();
+  }, [businessId, authLoading]);
 
   async function loadCustomers() {
     setLoading(true);
-    const [custRes, jobRes] = await Promise.all([
-      supabase.from("customers").select("*").eq("business_id", businessId).eq("archived", false).order("created_at", { ascending: false }),
-      supabase.from("jobs").select("customer_id, status").eq("business_id", businessId).in("status", ["scheduled", "in-progress", "quoted"]),
-    ]);
+    // Only filter by business_id for a real, authenticated tenant. With no session
+    // (e.g. the dev-mode bypass) there is no business_id to filter on — an empty
+    // string is not a valid uuid and Postgres rejects it, which previously made every
+    // one of these queries error out silently and left the list empty.
+    let custQ = supabase.from("customers").select("*").eq("archived", false).order("created_at", { ascending: false });
+    let jobQ = supabase.from("jobs").select("customer_id, status, created_at, scheduled_date");
+    let invQ = supabase.from("invoices").select("customer_id, status, total, created_at, paid_at");
+    if (businessId) {
+      custQ = custQ.eq("business_id", businessId);
+      jobQ = jobQ.eq("business_id", businessId);
+      invQ = invQ.eq("business_id", businessId);
+    }
+    const [custRes, jobRes, invRes] = await Promise.all([custQ, jobQ, invQ]);
     if (!custRes.error && custRes.data) {
       setCustomerList(custRes.data.map(rowToCustomer));
     }
     if (jobRes.data) {
       const counts: Record<string, number> = {};
       for (const j of jobRes.data) {
-        counts[j.customer_id] = (counts[j.customer_id] ?? 0) + 1;
+        if (["scheduled", "in-progress", "quoted"].includes(j.status)) {
+          counts[j.customer_id] = (counts[j.customer_id] ?? 0) + 1;
+        }
       }
       setActiveJobCounts(counts);
+    }
+    // Compute per-customer spend + last activity
+    if (invRes.data && jobRes.data) {
+      const meta: Record<string, CustomerMeta> = {};
+      for (const inv of invRes.data) {
+        if (!meta[inv.customer_id]) meta[inv.customer_id] = { totalSpend: 0, lastActivity: null };
+        if (inv.status === "paid") meta[inv.customer_id].totalSpend += Number(inv.total ?? 0);
+        const actDate = inv.paid_at ?? inv.created_at;
+        if (actDate && (!meta[inv.customer_id].lastActivity || actDate > meta[inv.customer_id].lastActivity!)) {
+          meta[inv.customer_id].lastActivity = actDate.split("T")[0];
+        }
+      }
+      for (const job of jobRes.data) {
+        const actDate = job.scheduled_date ?? job.created_at;
+        if (!actDate) continue;
+        const d = actDate.split("T")[0];
+        if (!meta[job.customer_id]) meta[job.customer_id] = { totalSpend: 0, lastActivity: null };
+        if (!meta[job.customer_id].lastActivity || d > meta[job.customer_id].lastActivity!) {
+          meta[job.customer_id].lastActivity = d;
+        }
+      }
+      setCustomerMeta(meta);
     }
     setLoading(false);
   }
@@ -128,13 +167,16 @@ export function CustomersPage() {
     const e = validate();
     if (Object.keys(e).length) { setErrors(e); return; }
 
+
     setSaving(true);
     setSaveError(null);
+
+    console.log("Inserting customer with business_id:", businessId);
 
     const { data, error } = await supabase
       .from("customers")
       .insert({
-        business_id: businessId,
+        business_id: businessId || null,
         name: `${form.firstName.trim()} ${form.lastName.trim()}`,
         email: form.email.trim() || null,
         phone: form.phone.trim(),
@@ -152,7 +194,8 @@ export function CustomersPage() {
     setSaving(false);
 
     if (error) {
-      setSaveError(error.message);
+      console.error("Supabase insert error:", error);
+      setSaveError(error.message + (error.details ? ` — ${error.details}` : "") + (error.hint ? ` (${error.hint})` : ""));
       return;
     }
 
@@ -223,6 +266,10 @@ export function CustomersPage() {
           <div className="divide-y divide-paper-deep">
             {filtered.map((customer) => {
               const activeCount = activeJobCounts[customer.id] ?? 0;
+              const meta = customerMeta[customer.id];
+              const mapsUrl = customer.address
+                ? `https://maps.google.com/?q=${encodeURIComponent([customer.address, customer.city, customer.state, customer.zip].filter(Boolean).join(", "))}`
+                : null;
 
               return (
                 <Link
@@ -236,30 +283,50 @@ export function CustomersPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-[14px] font-semibold text-ink">{customer.name}</p>
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                      {customer.address && (
-                        <span className="flex items-center gap-1 text-[12px] text-ink-quiet">
+                      {mapsUrl && (
+                        <a
+                          href={mapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
+                        >
                           <MapPin className="w-3 h-3" /> {customer.address}{customer.city ? `, ${customer.city}` : ""}
-                        </span>
+                        </a>
                       )}
                       {customer.phone && (
-                        <span className="flex items-center gap-1 text-[12px] text-ink-quiet">
+                        <a
+                          href={`tel:${customer.phone}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
+                        >
                           <Phone className="w-3 h-3" /> {customer.phone}
-                        </span>
+                        </a>
                       )}
                       {customer.email && (
-                        <span className="flex items-center gap-1 text-[12px] text-ink-quiet">
+                        <a
+                          href={`mailto:${customer.email}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
+                        >
                           <Mail className="w-3 h-3" /> {customer.email}
-                        </span>
+                        </a>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+                    {meta?.totalSpend ? (
+                      <span className="text-[13px] font-semibold text-ink">${meta.totalSpend.toLocaleString()}</span>
+                    ) : null}
+                    {meta?.lastActivity ? (
+                      <span className="text-[11px] text-ink-quiet">{meta.lastActivity}</span>
+                    ) : null}
+                    {activeCount > 0 && (
+                      <span className="text-[11px] text-ink-quiet">{activeCount} active job{activeCount > 1 ? "s" : ""}</span>
+                    )}
                     {customer.serviceTypes.map((t) => (
                       <Badge key={t} variant={serviceTypeBadge(t)}>{serviceLabel(t, services)}</Badge>
                     ))}
-                    {activeCount > 0 && (
-                      <span className="text-[12px] text-ink-quiet ml-1">{activeCount} active job{activeCount > 1 ? "s" : ""}</span>
-                    )}
                   </div>
                   <ChevronRight className="w-4 h-4 text-ink-quiet opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                 </Link>

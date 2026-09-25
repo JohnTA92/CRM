@@ -64,6 +64,7 @@ function Field({ label, value, onChange, placeholder, type = "text", required, e
 
 export function JobsPage() {
   const { services } = useServices();
+  const location = useLocation();
   const { business } = useAuth();
   const businessId = business?.id ?? "";
   const [jobList, setJobList] = useState<Job[]>([]);
@@ -95,10 +96,16 @@ export function JobsPage() {
 
   async function loadData() {
     setLoading(true);
-    const [jobRes, custRes] = await Promise.all([
-      supabase.from("jobs").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name").eq("business_id", businessId).eq("archived", false).order("name"),
-    ]);
+    // Only filter by business_id for a real, authenticated tenant — an empty string
+    // is not a valid uuid, so filtering on it with no session errored these queries
+    // out silently (empty job list, empty customer dropdown).
+    let jobQ = supabase.from("jobs").select("*").order("created_at", { ascending: false });
+    let custQ = supabase.from("customers").select("id, name").eq("archived", false).order("name");
+    if (businessId) {
+      jobQ = jobQ.eq("business_id", businessId);
+      custQ = custQ.eq("business_id", businessId);
+    }
+    const [jobRes, custRes] = await Promise.all([jobQ, custQ]);
     if (jobRes.data) setJobList(jobRes.data.map(rowToJob));
     if (custRes.data) setCustomers(custRes.data);
     setLoading(false);
@@ -139,7 +146,7 @@ export function JobsPage() {
     const { data, error } = await supabase
       .from("jobs")
       .insert({
-        business_id: businessId,
+        business_id: businessId || null,
         customer_id: customerId,
         service_type: serviceType,
         title: title.trim(),

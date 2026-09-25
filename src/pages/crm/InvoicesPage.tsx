@@ -49,10 +49,16 @@ export function InvoicesPage() {
 
   async function loadData() {
     setLoading(true);
-    const [invRes, custRes] = await Promise.all([
-      supabase.from("invoices").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name, email").eq("business_id", businessId).eq("archived", false).order("name"),
-    ]);
+    // Only filter by business_id for a real, authenticated tenant — an empty string
+    // is not a valid uuid, so filtering on it with no session errored these queries
+    // out silently (empty invoice list, empty customer dropdown).
+    let invQ = supabase.from("invoices").select("*").order("created_at", { ascending: false });
+    let custQ = supabase.from("customers").select("id, name, email").eq("archived", false).order("name");
+    if (businessId) {
+      invQ = invQ.eq("business_id", businessId);
+      custQ = custQ.eq("business_id", businessId);
+    }
+    const [invRes, custRes] = await Promise.all([invQ, custQ]);
     if (invRes.data) setInvoices(invRes.data.map(rowToInvoice));
     if (custRes.data) setCustomers(custRes.data);
     setLoading(false);
@@ -112,7 +118,7 @@ export function InvoicesPage() {
     const { data, error } = await supabase
       .from("invoices")
       .insert({
-        business_id: businessId,
+        business_id: businessId || null,
         customer_id: customerId,
         status: "draft",
         line_items: items,

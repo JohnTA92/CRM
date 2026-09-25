@@ -7,9 +7,14 @@ import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 const tempoRoot = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(tempoRoot, "..");
 
 export default defineConfig({
   root: tempoRoot,
+  optimizeDeps: {
+    entries: ["index.html", "designs/**/index.canvas.tsx"],
+    include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"],
+  },
   css: {
     postcss: {
       // Tailwind v4 is CSS-first: theme + sources live in
@@ -31,10 +36,10 @@ export default defineConfig({
       ),
       "framer-motion": path.resolve(tempoRoot, "node_modules/framer-motion"),
     },
-    dedupe: ["react", "react-dom", "framer-motion", "react-router-dom"],
+    dedupe: ["react", "react-dom", "framer-motion", "react-router-dom", "react/jsx-runtime", "react/jsx-dev-runtime", "tempo-sdk"],
   },
   plugins: [
-    tempoVitePlugin(),
+    tempoVitePlugin({ sourceIdentityRoot: projectRoot }),
     react(),
     tsconfigPaths({
       projectDiscovery: "lazy",

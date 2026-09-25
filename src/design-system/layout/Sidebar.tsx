@@ -5,6 +5,7 @@ import { useTheme } from "@/lib/theme";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { SupportModal } from "@/components/SupportModal";
+import { useIsAdmin } from "@/lib/auth";
 import {
   LayoutDashboard,
   Users,
@@ -23,11 +24,14 @@ import {
   CalendarCheck,
   LogOut,
   LifeBuoy,
+  Shield,
+  Inbox,
 } from "lucide-react";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
   { to: "/customers", icon: Users, label: "Customers" },
+  { to: "/portal-requests", icon: Inbox, label: "Portal Requests" },
   { to: "/jobs", icon: Briefcase, label: "Jobs" },
   { to: "/schedule", icon: CalendarDays, label: "Calendar" },
   { to: "/estimates", icon: FileText, label: "Estimates" },
@@ -44,6 +48,7 @@ const navItems = [
 export function Sidebar() {
   const { theme } = useTheme();
   const { user, business, signOut } = useAuth();
+  const isAdmin = useIsAdmin();
   const dark = theme === "dark";
   const [businessName, setBusinessName] = useState("My Business");
   const [supportOpen, setSupportOpen] = useState(false);
@@ -96,6 +101,18 @@ export function Sidebar() {
       </nav>
 
       <div className={cn("px-3 py-4 border-t", divider)}>
+        {isAdmin && (
+          <a
+            href="/admin"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors duration-150",
+              dark ? "text-[#a78bfa] hover:text-white hover:bg-white/10" : "text-[#7c3aed] hover:bg-[#f5f3ff]",
+            )}
+          >
+            <Shield className="w-4 h-4 flex-shrink-0" />
+            Admin Panel
+          </a>
+        )}
         <button
           onClick={() => setSupportOpen(true)}
           className={cn(

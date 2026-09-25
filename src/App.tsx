@@ -5,6 +5,7 @@ import { Sidebar } from "@/design-system/layout/Sidebar";
 import { DashboardPage } from "@/pages/crm/DashboardPage";
 import { CustomersPage } from "@/pages/crm/CustomersPage";
 import { CustomerDetailPage } from "@/pages/crm/CustomerDetailPage";
+import { PortalRequestsPage } from "@/pages/crm/PortalRequestsPage";
 import { JobsPage } from "@/pages/crm/JobsPage";
 import { JobDetailPage } from "@/pages/crm/JobDetailPage";
 import { SchedulePage } from "@/pages/crm/SchedulePage";
@@ -30,13 +31,14 @@ import { StripeCallbackPage } from "@/pages/auth/StripeCallbackPage";
 import { SubscriptionGate } from "@/components/SubscriptionGate";
 import { OnboardingWizard } from "@/pages/onboarding/OnboardingWizard";
 import { AdminPage } from "@/pages/admin/AdminPage";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { Loader2 } from "lucide-react";
 
-function RequireAuth({ children }: { children: React.ReactNode }) {
+function RequireAuth({ children, allowDevBypass = true }: { children: React.ReactNode; allowDevBypass?: boolean }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
-  if (DEV_MODE && localStorage.getItem("dev_bypass") === "true") return <>{children}</>;
+  if (allowDevBypass && DEV_MODE && localStorage.getItem("dev_bypass") === "true") return <>{children}</>;
 
   if (loading) {
     return (
@@ -66,10 +68,12 @@ function AppLayout() {
     <div className="flex min-h-screen bg-paper-warm">
       <Sidebar />
       <main className="ml-56 flex-1 min-w-0">
+        <AnnouncementBanner />
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/customers/:id" element={<CustomerDetailPage />} />
+          <Route path="/portal-requests" element={<PortalRequestsPage />} />
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
           <Route path="/schedule" element={<SchedulePage />} />
@@ -110,9 +114,20 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            {/* Admin panel — separate from the main app, no subscription gate */}
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/admin/*" element={<AdminPage />} />
+            {/* Admin panel — separate from the main app, no subscription gate.
+                The dev-mode "Skip Login" shortcut must never satisfy this gate: admin
+                access always requires a real Supabase session so the edge functions'
+                is_admin check runs against an actual account. */}
+            <Route path="/admin" element={
+              <RequireAuth allowDevBypass={false}>
+                <AdminPage />
+              </RequireAuth>
+            } />
+            <Route path="/admin/*" element={
+              <RequireAuth allowDevBypass={false}>
+                <AdminPage />
+              </RequireAuth>
+            } />
 
             {/* Public portal routes — no auth required */}
             <Route path="/portal/:customerId" element={<CustomerPortalPage />} />

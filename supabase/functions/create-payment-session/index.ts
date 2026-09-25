@@ -85,8 +85,12 @@ serve(async (req) => {
       "payment_intent_data[application_fee_amount]": String(platformFeeCents),
       "payment_intent_data[on_behalf_of]": connectedAccountId,
       "payment_intent_data[transfer_data][destination]": connectedAccountId,
-      "success_url": `${APP_URL}/portal/${invoice.customer_id}?payment=success`,
-      "cancel_url": `${APP_URL}/portal/${invoice.customer_id}?payment=cancelled`,
+      // invoice_id lets the portal verify the actual (webhook-driven) paid status of
+      // THIS invoice instead of just trusting the redirect, which fires the instant
+      // Stripe checkout completes client-side — before the async webhook has
+      // necessarily updated the invoice row.
+      "success_url": `${APP_URL}/portal/${invoice.customer_id}?payment=success&invoice_id=${invoiceId}`,
+      "cancel_url": `${APP_URL}/portal/${invoice.customer_id}?payment=cancelled&invoice_id=${invoiceId}`,
     });
 
     const email = invoice.customers?.email;

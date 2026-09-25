@@ -53,12 +53,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function loadBusiness(userId: string) {
+    // Resolve via business_members (owner OR staff), not a raw owner_id match —
+    // an owner is just the first business_members row (seeded automatically on
+    // signup below and backfilled for existing businesses), and this is what lets
+    // a future staff member's session resolve a business at all. Staff invite
+    // UI/edge function to actually populate a 'staff' row doesn't exist yet — this
+    // only fixes the lookup so it works once one exists.
     const { data } = await supabase
-      .from("businesses")
-      .select("*")
-      .eq("owner_id", userId)
-      .single();
-    setBusiness(data ?? null);
+      .from("business_members")
+      .select("business_id, businesses(*)")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    setBusiness((data?.businesses as unknown as Business) ?? null);
     setLoading(false);
   }
 
@@ -72,15 +79,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) return error.message;
     if (!data.user) return "Signup failed — please try again.";
 
-    const { error: bizError } = await supabase.from("businesses").insert({
-      owner_id: data.user.id,
-      name: businessName.trim(),
-    });
+    const { data: biz, error: bizError } = await supabase
+      .from("businesses")
+      .insert({ owner_id: data.user.id, name: businessName.trim() })
+      .select()
+      .single();
     if (bizError) return bizError.message;
+
+    // Membership is the actual authorization source of truth for every table's
+    // RLS (customers/jobs/invoices/estimates/businesses/company_settings) — without
+    // this row the new owner couldn't see anything they just created.
+    const { error: memberError } = await supabase.from("business_members").insert({
+      business_id: biz.id,
+      user_id: data.user.id,
+      role: "owner",
+    });
+    if (memberError) return memberError.message;
 
     // Seed default company_settings row for this business
     await supabase.from("company_settings").upsert({
-      id: data.user.id,
+      id: biz.id,
       business_name: businessName.trim(),
     });
 
@@ -88,6 +106,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signOut() {
+    // Dev bypass is a client-only shortcut around RequireAuth (see App.tsx) — clear it on
+    // sign-out so a stale flag can't silently re-admit the browser without a real session.
+    localStorage.removeItem("dev_bypass");
     await supabase.auth.signOut();
   }
 
@@ -102,4 +123,14 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
   return ctx;
+}
+
+export function useIsAdmin() {
+  const { user } = useAuth();
+  return user?.app_metadata?.is_admin === true;
+}
+
+export function useIsSuperAdmin() {
+  const { user } = useAuth();
+  return user?.app_metadata?.is_super_admin === true;
 }

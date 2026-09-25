@@ -113,10 +113,16 @@ export function EstimatesPage() {
 
   async function loadData() {
     setLoading(true);
-    const [estRes, custRes] = await Promise.all([
-      supabase.from("estimates").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
-      supabase.from("customers").select("id, name, email").eq("business_id", businessId).eq("archived", false).order("name"),
-    ]);
+    // Only filter by business_id for a real, authenticated tenant — an empty string
+    // is not a valid uuid, so filtering on it with no session errored these queries
+    // out silently (empty estimate list, empty customer dropdown).
+    let estQ = supabase.from("estimates").select("*").order("created_at", { ascending: false });
+    let custQ = supabase.from("customers").select("id, name, email").eq("archived", false).order("name");
+    if (businessId) {
+      estQ = estQ.eq("business_id", businessId);
+      custQ = custQ.eq("business_id", businessId);
+    }
+    const [estRes, custRes] = await Promise.all([estQ, custQ]);
     if (estRes.data) setEstimates(estRes.data.map(rowToEstimate));
     if (custRes.data) setCustomers(custRes.data);
     setLoading(false);
@@ -181,7 +187,7 @@ export function EstimatesPage() {
     const { data, error } = await supabase
       .from("estimates")
       .insert({
-        business_id: businessId,
+        business_id: businessId || null,
         customer_id: customerId,
         service_type: serviceType,
         tier: tier === "none" ? null : tier,

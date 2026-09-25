@@ -67,11 +67,22 @@ export function PortalRequestsPage() {
   const [scheduleRequests, setScheduleRequests] = useState<ScheduleRequest[]>([]);
   const [messagesByCustomer, setMessagesByCustomer] = useState<Record<string, PortalMessage[]>>({});
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
-  const [replyText, setReplyText] = useState("");
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const replyText = expandedCustomer ? (replyDrafts[expandedCustomer] ?? "") : "";
+  function setReplyText(value: string) {
+    if (expandedCustomer) setReplyDrafts((prev) => ({ ...prev, [expandedCustomer]: value }));
+  }
   const [sending, setSending] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
+    if (!businessId) {
+      setLoadError("Your account has no business assigned. Sign in with a business account to continue.");
+      setLoading(false); return;
+    }
     let custQ = supabase.from("customers").select("id, name");
     let srQ = supabase.from("service_requests").select("*").order("created_at", { ascending: false });
     let sqQ = supabase.from("job_schedule_requests").select("*").order("created_at", { ascending: false });
@@ -84,6 +95,10 @@ export function PortalRequestsPage() {
     }
     const [custRes, srRes, sqRes, msgRes] = await Promise.all([custQ, srQ, sqQ, msgQ]);
 
+    if ([custRes, srRes, sqRes, msgRes].some((result) => result.error)) {
+      setLoadError("Portal requests could not be loaded. Please retry.");
+      setLoading(false); return;
+    }
     if (custRes.data) {
       const map: Record<string, CustomerLite> = {};
       for (const c of custRes.data) map[c.id] = c;
@@ -106,28 +121,34 @@ export function PortalRequestsPage() {
   }, [businessId, authLoading, load]);
 
   async function updateServiceStatus(id: string, status: string) {
-    const { data } = await supabase.from("service_requests").update({ status, updated_at: new Date().toISOString() }).eq("id", id).select().single();
+    setActionError(null);
+    const { data, error } = await supabase.from("service_requests").update({ status, updated_at: new Date().toISOString() }).eq("id", id).select().single();
+    if (error) { setActionError("Could not update the service request. Please retry."); return; }
     if (data) setServiceRequests((prev) => prev.map((r) => r.id === id ? data : r));
   }
 
   async function updateScheduleStatus(id: string, status: string) {
-    const { data } = await supabase.from("job_schedule_requests").update({ status }).eq("id", id).select().single();
+    setActionError(null);
+    const { data, error } = await supabase.from("job_schedule_requests").update({ status }).eq("id", id).select().single();
+    if (error) { setActionError(error.message); return; }
     if (data) setScheduleRequests((prev) => prev.map((r) => r.id === id ? data : r));
   }
 
   async function sendReply(customerId: string) {
-    if (!replyText.trim()) return;
+    if (sending || !businessId || !replyText.trim()) return;
+    setActionError(null);
     setSending(true);
-    const { data } = await supabase.from("portal_messages").insert({
+    const { data, error } = await supabase.from("portal_messages").insert({
       business_id: businessId,
       customer_id: customerId,
       sender: "staff",
       body: replyText.trim(),
     }).select().single();
     setSending(false);
+    if (error) { setActionError("Reply was not sent. Please retry."); return; }
     if (data) {
       setMessagesByCustomer((prev) => ({ ...prev, [customerId]: [...(prev[customerId] ?? []), data] }));
-      setReplyText("");
+      setReplyDrafts((prev) => ({ ...prev, [customerId]: "" }));
     }
   }
 
@@ -147,8 +168,11 @@ export function PortalRequestsPage() {
     );
   }
 
+  if (loadError) return <div className="p-8" role="alert"><p>{loadError}</p><button onClick={load} className="underline mt-3">Retry</button></div>;
+
   return (
     <div className="p-8">
+      {actionError && <p role="alert" className="text-red-700 mb-4">{actionError}</p>}
       <div className="mb-6">
         <h1 className="text-[22px] font-semibold text-ink">Portal Requests</h1>
         <p className="text-[14px] text-ink-quiet mt-1">Service requests, reschedule/cancellation requests, and messages submitted by customers through their portal.</p>
@@ -244,7 +268,7 @@ export function PortalRequestsPage() {
                     <X className="w-3.5 h-3.5" /> Decline
                   </button>
                   <p className="text-[11px] text-ink-quiet flex items-center gap-1 ml-1">
-                    <AlertCircle className="w-3 h-3" /> Approving here doesn't move the job automatically — update it from Jobs.
+                    <AlertCircle className="w-3 h-3" /> Approval updates the job’s calendar date or cancels the visit.
                   </p>
                 </div>
               )}
@@ -266,7 +290,7 @@ export function PortalRequestsPage() {
             return (
               <div key={customerId} className="bg-white rounded-xl border border-paper-deep overflow-hidden">
                 <button
-                  onClick={() => setExpandedCustomer(expanded ? null : customerId)}
+                  onClick={() => { setExpandedCustomer(expanded ? null : customerId); setActionError(null); }}
                   className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-paper-warm transition-colors text-left"
                 >
                   <div className="flex-1 min-w-0">
@@ -299,6 +323,7 @@ export function PortalRequestsPage() {
                         className="flex-1 px-3 py-2 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink transition-colors"
                       />
                       <button
+                        aria-label="Send reply"
                         onClick={() => sendReply(customerId)}
                         disabled={sending || !replyText.trim()}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors"

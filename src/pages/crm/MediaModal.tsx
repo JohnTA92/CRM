@@ -1,6 +1,6 @@
+import { PrivateImage, PrivateVideo, deletePrivateMedia } from "@/lib/privateStorage";
 import { useState } from "react";
 import { X, ChevronLeft, ChevronRight, Play, Camera, Trash2, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
 
 type MediaTag = "before" | "after" | "general";
 type MediaItem = {
@@ -33,14 +33,15 @@ export function MediaModal({ media: initialMedia, initialIdx, onClose, onDeleted
   const [lightboxItem, setLightboxItem] = useState<MediaItem | null>(
     initialIdx !== null ? (initialMedia[initialIdx] ?? null) : null
   );
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const tabs: { key: Tab; label: string }[] = [
+  const tabs = ([
     { key: "all", label: "All" },
     { key: "before", label: "Before" },
     { key: "after", label: "After" },
     { key: "general", label: "General" },
-  ].filter((t) => t.key === "all" || items.some((m) => m.tag === t.key));
+  ] satisfies { key: Tab; label: string }[]).filter((t) => t.key === "all" || items.some((m) => m.tag === t.key));
 
   const visible = activeTab === "all" ? items : items.filter((m) => m.tag === activeTab);
   const currentIdx = lightboxItem ? visible.indexOf(lightboxItem) : -1;
@@ -56,9 +57,12 @@ export function MediaModal({ media: initialMedia, initialIdx, onClose, onDeleted
     e?.stopPropagation();
     setDeletingId(item.id);
 
-    const parts = item.url.split("/job-media/");
-    if (parts[1]) await supabase.storage.from("job-media").remove([parts[1]]);
-    await supabase.from("job_media").delete().eq("id", item.id);
+    setDeleteError(null);
+    try { await deletePrivateMedia(item.id, item.url); }
+    catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Could not delete this file. Please retry.");
+      setDeletingId(null); return;
+    }
 
     const remaining = items.filter((m) => m.id !== item.id);
     setItems(remaining);
@@ -95,6 +99,7 @@ export function MediaModal({ media: initialMedia, initialIdx, onClose, onDeleted
 
   return (
     <>
+      {deleteError && <p role="alert" className="p-4 text-red-700">{deleteError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-paper-deep">
         <div className="flex items-center gap-2">
@@ -130,9 +135,9 @@ export function MediaModal({ media: initialMedia, initialIdx, onClose, onDeleted
         <div className="p-4">
           <div className="relative rounded-xl overflow-hidden bg-black">
             {lightboxItem.file_type?.startsWith("video/") ? (
-              <video src={lightboxItem.url} controls autoPlay className="w-full max-h-[400px] object-contain" />
+              <PrivateVideo src={lightboxItem.url} controls autoPlay className="w-full max-h-[400px] object-contain" />
             ) : (
-              <img src={lightboxItem.url} alt={lightboxItem.file_name} className="w-full max-h-[400px] object-contain" />
+              <PrivateImage src={lightboxItem.url} alt={lightboxItem.file_name} className="w-full max-h-[400px] object-contain" />
             )}
             {currentIdx > 0 && (
               <button onClick={prev}
@@ -182,7 +187,7 @@ export function MediaModal({ media: initialMedia, initialIdx, onClose, onDeleted
                 }`}>
                 {m.file_type?.startsWith("video/")
                   ? <div className="w-full h-full bg-paper-dark flex items-center justify-center"><Play className="w-3 h-3 text-ink-quiet" /></div>
-                  : <img src={m.url} alt="" className="w-full h-full object-cover" />}
+                  : <PrivateImage src={m.url} alt="" className="w-full h-full object-cover" />}
               </div>
             ))}
           </div>
@@ -202,7 +207,7 @@ export function MediaModal({ media: initialMedia, initialIdx, onClose, onDeleted
                   className="aspect-square rounded-xl overflow-hidden border border-paper-deep cursor-pointer hover:opacity-90 hover:shadow-md transition-all relative group">
                   {m.file_type?.startsWith("video/")
                     ? <div className="w-full h-full bg-paper-dark flex items-center justify-center"><Play className="w-6 h-6 text-ink-quiet" /></div>
-                    : <img src={m.url} alt={m.file_name} className="w-full h-full object-cover" />}
+                    : <PrivateImage src={m.url} alt={m.file_name} className="w-full h-full object-cover" />}
                   {/* Tag badge */}
                   <div className="absolute bottom-1.5 left-1.5">
                     <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${TAG_COLORS[m.tag]}`}>

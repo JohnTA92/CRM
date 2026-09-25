@@ -417,7 +417,7 @@ export function RoutePage() {
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     {stop.geocoding === "pending" && <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-quiet" />}
                     {stop.geocoding === "failed" && stop.address && (
-                      <AlertCircle className="w-3.5 h-3.5 text-amber-400" title="Could not locate this address" />
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400" aria-label="Could not locate this address" />
                     )}
                     {stop.address && (
                       <a

@@ -1,3 +1,4 @@
+import { useAuth } from "@/lib/auth";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { type Job } from "@/data/crm";
@@ -47,6 +48,10 @@ const SERVICE_COLORS: Record<string, string> = {
 
 export function SchedulePage() {
   const { services } = useServices();
+  const { business } = useAuth();
+  const businessId = business?.id;
+  const [crew, setCrew] = useState<{id:string;name:string}[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -58,15 +63,20 @@ export function SchedulePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (businessId) loadData();
+  }, [businessId]);
 
   async function loadData() {
     setLoading(true);
-    const [jobRes, custRes] = await Promise.all([
-      supabase.from("jobs").select("*"),
-      supabase.from("customers").select("id, name, address, city, state, zip"),
+    const [jobRes, custRes, crewRes] = await Promise.all([
+      supabase.from("jobs").select("*").eq("business_id", businessId),
+      supabase.from("customers").select("id, name, address, city, state, zip").eq("business_id", businessId),
+      supabase.from("crew_members").select("id,name").eq("business_id", businessId).eq("active", true),
     ]);
+    const error = jobRes.error || custRes.error || crewRes.error;
+    setLoadError(error?.message ?? null);
+    if (error) { setLoading(false); return; }
+    setCrew(crewRes.data ?? []);
     if (jobRes.data) {
       setJobs(jobRes.data.map((row: any): Job => ({
         id: row.id,
@@ -78,6 +88,7 @@ export function SchedulePage() {
         scheduledTime: row.scheduled_time,
         durationMinutes: row.duration_minutes ?? 60,
         assignedTo: row.assigned_to,
+        crewMemberIds: row.crew_member_ids ?? [],
         notes: row.notes ?? "",
         estimateId: row.estimate_id,
         invoiceId: row.invoice_id,
@@ -121,15 +132,15 @@ export function SchedulePage() {
   const getCustomerName = (id: string) => customers[id] ?? "";
 
   const unassigned = jobs.filter(
-    (j) => !j.assignedTo && j.scheduledDate && ["scheduled", "in-progress"].includes(j.status),
+    (j) => !j.crewMemberIds?.length && j.scheduledDate && ["scheduled", "in-progress"].includes(j.status),
   );
 
   const selectedDayJobs = selectedISO
     ? jobs.filter((j) => {
         return (
           j.scheduledDate === selectedISO &&
-          (crewFilter === "all" || j.assignedTo === crewFilter) &&
-          ["scheduled", "in-progress", "complete", "quoted"].includes(j.status)
+          (crewFilter === "all" || j.crewMemberIds?.includes(crewFilter)) &&
+          ["scheduled", "in-progress", "complete", "quoted", "invoiced"].includes(j.status)
         );
       })
     : [];
@@ -137,9 +148,10 @@ export function SchedulePage() {
   const selectedDate = selectedISO ? new Date(selectedISO + "T12:00:00") : null;
 
   return (
-    <div className="p-6">
+    <div className="p-3 sm:p-6">
+      {loadError && <p role="alert" className="text-red-700">Could not load schedule: {loadError} <button onClick={loadData}>Retry</button></p>}
       {/* Header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-wrap gap-3 items-center justify-between mb-5">
         <h1 className="text-[22px] font-semibold text-ink flex items-center gap-2">
           Schedule
           {loading && <Loader2 className="w-4 h-4 animate-spin text-ink-quiet" />}
@@ -152,19 +164,20 @@ export function SchedulePage() {
             Today
           </button>
           <div className="flex items-center border border-paper-deep rounded-lg overflow-hidden">
-            <button onClick={prevMonth} className="p-2 hover:bg-paper-warm transition-colors">
+            <button aria-label="Previous month" onClick={prevMonth} className="p-2 hover:bg-paper-warm transition-colors">
               <ChevronLeft className="w-4 h-4 text-ink-soft" />
             </button>
             <span className="px-4 text-[14px] font-semibold text-ink min-w-44 text-center">
               {MONTHS[month]} {year}
             </span>
-            <button onClick={nextMonth} className="p-2 hover:bg-paper-warm transition-colors">
+            <button aria-label="Next month" onClick={nextMonth} className="p-2 hover:bg-paper-warm transition-colors">
               <ChevronRight className="w-4 h-4 text-ink-soft" />
             </button>
           </div>
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-3 mb-4"><label>Crew <select aria-label="Filter by crew" value={crewFilter} onChange={e=>setCrewFilter(e.target.value)} className="border rounded p-2"><option value="all">All crew</option>{crew.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><Link className="border rounded p-2" to="/jobs" state={{prefillDate:selectedISO ?? todayISO}}>New job{selectedISO ? ` on ${selectedISO}` : ""}</Link></div>
       {/* Monthly totals */}
       {(() => {
         const monthISOs = grid.filter(Boolean).map((d) => toISO(d!.getFullYear(), d!.getMonth(), d!.getDate()));
@@ -173,7 +186,7 @@ export function SchedulePage() {
         const completed = monthJobs.filter((j) => j.status === "complete" || j.status === "invoiced").length;
         const total = monthJobs.length;
         return (
-          <div className="flex gap-4 mb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
             {[
               { label: "Monthly Total", value: total },
               { label: "Scheduled", value: scheduled },
@@ -189,7 +202,7 @@ export function SchedulePage() {
       })()}
 
 
-      <div className="flex gap-5">
+      <div className="flex flex-col lg:flex-row gap-5">
         {/* Calendar grid */}
         <div className="flex-1 min-w-0 bg-white rounded-xl border border-paper-deep overflow-hidden">
           {/* Day headers */}
@@ -220,8 +233,8 @@ export function SchedulePage() {
 
               const dayJobs = jobs.filter((j) =>
                 j.scheduledDate === iso &&
-                (crewFilter === "all" || j.assignedTo === crewFilter) &&
-                ["scheduled", "in-progress", "complete", "quoted"].includes(j.status)
+                (crewFilter === "all" || j.crewMemberIds?.includes(crewFilter)) &&
+                ["scheduled", "in-progress", "complete", "quoted", "invoiced"].includes(j.status)
               );
 
               return (
@@ -239,7 +252,7 @@ export function SchedulePage() {
                   }`}
                 >
                   <div className="flex items-center justify-between px-0.5">
-                    <span
+                    <button type="button" aria-label={`View ${iso}`} onClick={e=>{e.stopPropagation(); setSelectedISO(iso);}}
                       className={`text-[13px] font-semibold w-6 h-6 flex items-center justify-center rounded-full ${
                         isToday
                           ? "bg-accent text-white"
@@ -249,7 +262,7 @@ export function SchedulePage() {
                       }`}
                     >
                       {date.getDate()}
-                    </span>
+                    </button>
                     {dayJobs.length > 0 && (
                       <span className="text-[10px] text-ink-quiet">{dayJobs.length}</span>
                     )}
@@ -287,7 +300,7 @@ export function SchedulePage() {
 
         {/* Unassigned sidebar */}
         {unassigned.length > 0 && (
-          <div className="w-48 flex-shrink-0">
+          <div className="w-full lg:w-48 flex-shrink-0">
             <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
               <div className="px-4 py-3 border-b border-paper-deep bg-paper-warm">
                 <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide">Unassigned</p>
@@ -313,7 +326,7 @@ export function SchedulePage() {
       {selectedISO && selectedDate && (
         <div className="mt-6 bg-white rounded-xl border border-paper-deep overflow-hidden">
           {/* Panel header */}
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
+          <div className="flex flex-wrap gap-3 items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
             <div>
               <p className="text-[14px] font-semibold text-ink">
                 {selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
@@ -322,7 +335,7 @@ export function SchedulePage() {
                 {selectedDayJobs.length === 0 ? "No jobs scheduled" : `${selectedDayJobs.length} job${selectedDayJobs.length > 1 ? "s" : ""} scheduled`}
               </p>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               {[
                 { label: "Total", value: selectedDayJobs.length },
                 { label: "Scheduled", value: selectedDayJobs.filter((j) => ["scheduled","quoted"].includes(j.status)).length },
@@ -360,6 +373,7 @@ export function SchedulePage() {
             </div>
           </div>
 
+          {selectedDayJobs.filter(j=>!j.scheduledTime).map(j=><Link key={j.id} to={`/jobs/${j.id}`} className="block px-5 py-3 border-b">Time not set · {j.title}</Link>)}
           {/* 24-hour timeline */}
           <div className="overflow-y-auto max-h-[480px]">
             {HOURS.map((hour) => {

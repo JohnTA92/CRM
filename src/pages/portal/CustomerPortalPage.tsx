@@ -1,3 +1,5 @@
+import { isClosedJob } from "@/lib/scheduling";
+import { balanceDue, sumMoney } from "@/lib/money";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { useState, useEffect } from "react";
@@ -88,6 +90,7 @@ function CustomerPortalPageContent() {
 
   const [messageText, setMessageText] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
 
   const paymentParam = searchParams.get("payment") as "success" | "cancelled" | null;
   const paidInvoiceIdParam = searchParams.get("invoice_id");
@@ -118,6 +121,9 @@ function CustomerPortalPageContent() {
         client.from("job_schedule_requests").select("*").eq("customer_id", id).order("created_at", { ascending: false }),
         client.from("portal_messages").select("*").eq("customer_id", id).order("created_at", { ascending: true }),
       ]);
+      if (srRes.error || sqRes.error || msgRes.error) {
+        setLoadError("Requests and messages could not be loaded. Please refresh to retry.");
+      }
       if (srRes.data) setServiceRequests(srRes.data);
       if (sqRes.data) setScheduleRequests(sqRes.data);
       if (msgRes.data) setMessages(msgRes.data);
@@ -126,7 +132,7 @@ function CustomerPortalPageContent() {
   }
 
   async function submitServiceRequest() {
-    if (!srDescription.trim() || !customerId) return;
+    if (preview || srSaving || !srDescription.trim() || !customerId) return;
     setSrSaving(true);
     setSrError(null);
     const { data, error } = await client.from("service_requests").insert({
@@ -141,7 +147,8 @@ function CustomerPortalPageContent() {
   }
 
   async function submitScheduleRequest(jobId: string) {
-    if (!customerId) return;
+    if (preview || rsSaving || !customerId) return;
+    if (rsType === "reschedule" && !rsDate) { setRsError("Choose a requested date."); return; }
     setRsSaving(true);
     setRsError(null);
     const { data, error } = await client.from("job_schedule_requests").insert({
@@ -158,7 +165,8 @@ function CustomerPortalPageContent() {
   }
 
   async function sendMessage() {
-    if (!messageText.trim() || !customerId) return;
+    if (preview || sendingMessage || !messageText.trim() || !customerId) return;
+    setMessageError(null);
     setSendingMessage(true);
     const { data, error } = await client.from("portal_messages").insert({
       customer_id: customerId,
@@ -166,12 +174,12 @@ function CustomerPortalPageContent() {
       body: messageText.trim(),
     }).select().single();
     setSendingMessage(false);
-    if (!error && data) { setMessages((prev) => [...prev, data]); setMessageText(""); }
+    if (error) { setMessageError("Message was not sent. Your text is saved here — please try again."); return; }
+    if (data) { setMessages((prev) => [...prev, data]); setMessageText(""); }
   }
 
-  const now = new Date();
-  const upcomingJobs = jobs.filter((j) => !j.scheduled_date || new Date(j.scheduled_date) >= now || !["complete", "invoiced"].includes(j.status));
-  const pastJobs = jobs.filter((j) => j.scheduled_date && new Date(j.scheduled_date) < now && ["complete", "invoiced"].includes(j.status));
+  const upcomingJobs = jobs.filter((j) => !isClosedJob(j.status));
+  const pastJobs = jobs.filter((j) => isClosedJob(j.status));
 
   if (authLoading || dataLoading) {
     return (
@@ -213,8 +221,8 @@ function CustomerPortalPageContent() {
     );
   }
 
-  const unpaidInvoices = invoices.filter((i) => i.status !== "paid");
-  const totalOwed = unpaidInvoices.reduce((s, i) => s + (i.total ?? 0), 0);
+  const unpaidInvoices = invoices.filter((i) => balanceDue(i) > 0);
+  const totalOwed = sumMoney(unpaidInvoices, balanceDue);
 
   // The Stripe success redirect fires the instant checkout completes client-side —
   // before the async webhook has necessarily updated the invoice's status in the
@@ -243,6 +251,7 @@ function CustomerPortalPageContent() {
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+        {preview && <p className="text-sm text-ink-quiet" role="status">Staff preview — customer forms are read-only. Use a customer invite link to test submissions.</p>}
         {/* Welcome */}
         <div className="bg-white rounded-xl border border-paper-deep p-5">
           <h1 className="text-[20px] font-semibold text-ink">Hi, {customer.name.split(" ")[0]}!</h1>
@@ -285,7 +294,7 @@ function CustomerPortalPageContent() {
             <h2 className="text-[14px] font-semibold text-ink flex items-center gap-2">
               <Wrench className="w-4 h-4 text-ink-quiet" /> Request a Service
             </h2>
-            {!showServiceForm && (
+            {!preview && !showServiceForm && (
               <button
                 onClick={() => setShowServiceForm(true)}
                 className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-soft hover:text-ink transition-colors"
@@ -359,6 +368,7 @@ function CustomerPortalPageContent() {
                 <div className="bg-white rounded-xl border border-paper-deep divide-y divide-paper-deep overflow-hidden">
                   {upcomingJobs.map((j) => {
                     const pendingRequest = scheduleRequests.find((r) => r.job_id === j.id && r.status === "pending");
+                    const lastDecision = scheduleRequests.find((r) => r.job_id === j.id && r.status !== "pending");
                     return (
                       <div key={j.id} className="px-5 py-3.5">
                         <div className="flex items-center gap-4">
@@ -375,9 +385,10 @@ function CustomerPortalPageContent() {
                           </span>
                         </div>
 
+                        {lastDecision && <p className="text-[11px] text-ink-quiet mt-2">Previous {lastDecision.request_type} request: {lastDecision.status}</p>}
                         {pendingRequest ? (
                           <p className="text-[11px] text-ink-quiet mt-2 flex items-center gap-1.5">
-                            <CalendarClock className="w-3 h-3" /> {pendingRequest.request_type === "cancel" ? "Cancellation" : "Reschedule"} request pending
+                            <CalendarClock className="w-3 h-3" /> {pendingRequest.request_type === "cancel" ? "Cancellation" : "Reschedule"} request {pendingRequest.status}
                           </p>
                         ) : reschedulingJobId === j.id ? (
                           <div className="mt-2 pt-2 border-t border-paper-deep space-y-2">
@@ -404,7 +415,8 @@ function CustomerPortalPageContent() {
                           </div>
                         ) : (
                           <button
-                            onClick={() => setReschedulingJobId(j.id)}
+                            disabled={preview}
+                            onClick={() => { setReschedulingJobId(j.id); setRsError(null); }}
                             className="text-[11px] font-medium text-ink-quiet hover:text-ink mt-2 flex items-center gap-1 transition-colors"
                           >
                             <CalendarClock className="w-3 h-3" /> Request reschedule or cancellation
@@ -420,7 +432,7 @@ function CustomerPortalPageContent() {
             {pastJobs.length > 0 && (
               <div>
                 <h2 className="text-[14px] font-semibold text-ink mb-3 flex items-center gap-2">
-                  <History className="w-4 h-4 text-ink-quiet" /> Past Appointments
+                  <History className="w-4 h-4 text-ink-quiet" /> Appointment History
                 </h2>
                 <div className="bg-white rounded-xl border border-paper-deep divide-y divide-paper-deep overflow-hidden">
                   {pastJobs.map((j) => (
@@ -476,6 +488,7 @@ function CustomerPortalPageContent() {
                     <div key={inv.id} className="flex items-center gap-4 px-5 py-3.5">
                       <div className="flex-1 min-w-0">
                         <p className="text-[14px] font-medium text-ink">${Number(inv.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[12px] text-ink-quiet">Paid: ${Number(inv.paid_total ?? 0).toFixed(2)} · Balance: ${balanceDue(inv).toFixed(2)}</p>
                         {inv.due_at && <p className="text-[12px] text-ink-quiet">Due {inv.due_at}</p>}
                         {inv.notes && <p className="text-[12px] text-ink-quiet mt-0.5">{inv.notes}</p>}
                       </div>
@@ -517,8 +530,11 @@ function CustomerPortalPageContent() {
               ))}
             </div>
           )}
+          {messageError && <p role="alert" className="text-sm text-red-700 mb-2">{messageError}</p>}
           <div className="flex gap-2">
             <input
+              disabled={preview}
+              aria-label="Message"
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }}
@@ -527,7 +543,8 @@ function CustomerPortalPageContent() {
             />
             <button
               onClick={sendMessage}
-              disabled={sendingMessage || !messageText.trim()}
+              aria-label="Send message"
+              disabled={preview || sendingMessage || !messageText.trim()}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors"
             >
               {sendingMessage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}

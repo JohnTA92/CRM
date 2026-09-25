@@ -1,3 +1,4 @@
+import { PrivateImage, newFilePath, storagePath } from "@/lib/privateStorage";
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/design-system/primitives/Button";
@@ -65,7 +66,7 @@ export function ExpensesPage() {
   const { business } = useAuth();
   const businessId = business?.id ?? "";
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { if (businessId) loadAll(); }, [businessId]);
 
   async function loadAll() {
     setLoading(true);
@@ -104,14 +105,6 @@ export function ExpensesPage() {
     if (file) handlePhotoChange(file);
   }
 
-  async function uploadPhoto(file: File, expenseId: string): Promise<string | null> {
-    const ext = file.name.split(".").pop() ?? "jpg";
-    const path = `${expenseId}.${ext}`;
-    const { error } = await supabase.storage.from("expense-receipts").upload(path, file, { upsert: true });
-    if (error) return null;
-    const { data } = supabase.storage.from("expense-receipts").getPublicUrl(path);
-    return data.publicUrl;
-  }
 
   async function handleSubmit() {
     const errs: Record<string, string> = {};
@@ -123,29 +116,23 @@ export function ExpensesPage() {
     setSaving(true);
     setSaveError(null);
 
-    // Insert first to get the ID, then upload photo
-    const { data, error } = await supabase.from("expenses").insert({
-      business_id: businessId,
-      amount: parseFloat(fAmount),
-      category: fCategory,
-      description: fDescription.trim(),
-      date: fDate,
-      job_id: fJobId || null,
-      notes: fNotes.trim() || null,
-      receipt_url: null,
-    }).select().single();
-
-    if (error) { setSaveError(error.message); setSaving(false); return; }
-
+    const expenseId = crypto.randomUUID();
     let receipt_url: string | null = null;
-    if (fPhoto && data) {
-      receipt_url = await uploadPhoto(fPhoto, data.id);
-      if (receipt_url) {
-        await supabase.from("expenses").update({ receipt_url }).eq("id", data.id);
-      }
+    if (fPhoto) {
+      receipt_url = newFilePath(businessId, expenseId, fPhoto);
+      const { error } = await supabase.storage.from("expense-receipts").upload(receipt_url, fPhoto);
+      if (error) { setSaveError(`Receipt upload failed: ${error.message}`); setSaving(false); return; }
     }
-
-    if (data) setExpenses((prev) => [{ ...data, receipt_url }, ...prev]);
+    const { data, error } = await supabase.from("expenses").insert({
+      id: expenseId, business_id: businessId, amount: parseFloat(fAmount),
+      category: fCategory, description: fDescription.trim(), date: fDate,
+      job_id: fJobId || null, notes: fNotes.trim() || null, receipt_url,
+    }).select().single();
+    if (error) {
+      if (receipt_url) await supabase.storage.from("expense-receipts").remove([receipt_url]);
+      setSaveError(error.message); setSaving(false); return;
+    }
+    setExpenses((prev) => [data, ...prev]);
     setSaving(false);
     setShowModal(false);
     resetForm();
@@ -156,10 +143,12 @@ export function ExpensesPage() {
     // also remove storage file if exists
     const exp = expenses.find((e) => e.id === id);
     if (exp?.receipt_url) {
-      const path = exp.receipt_url.split("/expense-receipts/")[1];
-      if (path) await supabase.storage.from("expense-receipts").remove([path]);
+      const path = storagePath("expense-receipts", exp.receipt_url);
+      const { error } = await supabase.storage.from("expense-receipts").remove([path]);
+      if (error) { setSaveError(error.message); setDeleting(false); return; }
     }
-    await supabase.from("expenses").delete().eq("id", id);
+    const { error } = await supabase.from("expenses").delete().eq("id", id).select("id").single();
+    if (error) { setSaveError(error.message); setDeleting(false); return; }
     setExpenses((prev) => prev.filter((e) => e.id !== id));
     setDeleteId(null);
     setDeleting(false);
@@ -178,6 +167,7 @@ export function ExpensesPage() {
 
   return (
     <div className="p-8">
+      {!showModal && saveError && <p role="alert" className="mb-4 text-red-700">{saveError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between mb-7">
         <div>
@@ -259,7 +249,7 @@ export function ExpensesPage() {
                           onClick={() => setLightboxUrl(exp.receipt_url)}
                           className="w-10 h-10 rounded-lg overflow-hidden border border-paper-deep hover:border-accent transition-colors relative group/thumb"
                         >
-                          <img src={exp.receipt_url} alt="receipt" className="w-full h-full object-cover" />
+                          <PrivateImage bucket="expense-receipts" src={exp.receipt_url} alt="receipt" className="w-full h-full object-cover" />
                           <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/20 flex items-center justify-center transition-colors">
                             <ZoomIn className="w-3.5 h-3.5 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity" />
                           </div>
@@ -448,7 +438,7 @@ export function ExpensesPage() {
           <button className="absolute top-4 right-4 w-9 h-9 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors">
             <X className="w-5 h-5 text-white" />
           </button>
-          <img
+          <PrivateImage bucket="expense-receipts"
             src={lightboxUrl}
             alt="receipt"
             className="max-w-full max-h-full rounded-xl shadow-2xl object-contain"

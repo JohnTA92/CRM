@@ -1,3 +1,4 @@
+import { normalizeLineItems, previewTotal, lineAmount, moneyCents, balanceDue as invoiceBalance } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
@@ -20,6 +21,9 @@ export function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { business } = useAuth();
   const businessId = business?.id ?? "";
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [paymentRequestId, setPaymentRequestId] = useState(() => crypto.randomUUID());
   const [invoice, setInvoice] = useState<any>(null);
   const [customer, setCustomer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -44,20 +48,14 @@ export function InvoiceDetailPage() {
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  const [stripeEnabled, setStripeEnabled] = useState(false);
+  const stripeEnabled = false; // Stripe activation remains deferred.
   const [creatingPaymentLink, setCreatingPaymentLink] = useState(false);
   const [paymentLinkError, setPaymentLinkError] = useState<string | null>(null);
 
-  useEffect(() => { if (id) load(id); }, [id]);
-  useEffect(() => {
-    supabase.from("company_settings").select("stripe_enabled, stripe_publishable_key").eq("id", businessId).single()
-      .then(({ data }) => {
-        if (data?.stripe_enabled && data?.stripe_publishable_key?.startsWith("pk_")) setStripeEnabled(true);
-      });
-  }, [businessId]);
+  useEffect(() => { if (id && businessId) load(id); }, [id, businessId]);
 
   async function load(invId: string) {
-    setLoading(true);
+    setLoading(true); setNotFound(false); setActionError(null);
     const { data, error } = await supabase.from("invoices").select("*").eq("id", invId).eq("business_id", businessId).single();
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setInvoice(data);
@@ -66,69 +64,72 @@ export function InvoiceDetailPage() {
       setCustomer(cust);
       setSendTo(cust.email ?? "");
     }
-    const { data: pmts } = await supabase
+    const { data: pmts, error: paymentLoadError } = await supabase
       .from("invoice_payments")
       .select("*")
       .eq("invoice_id", invId)
       .eq("business_id", businessId)
       .order("paid_at", { ascending: true });
+    if (paymentLoadError) setActionError(`Could not load payment history: ${paymentLoadError.message}`);
     if (pmts) setPayments(pmts);
     setLoading(false);
   }
 
   async function handleLogPayment() {
-    const amt = parseFloat(paymentAmount);
-    if (!amt || amt <= 0) { setPaymentError("Enter a valid amount."); return; }
-    setPaymentSaving(true);
-    setPaymentError(null);
-    const { data: pmt, error } = await supabase.from("invoice_payments").insert({
-      invoice_id: invoice.id,
-      business_id: businessId,
-      amount: amt,
-      method: paymentMethod,
-      note: paymentNote.trim() || null,
-      paid_at: new Date().toISOString(),
-    }).select().single();
-    if (error) { setPaymentError(error.message); setPaymentSaving(false); return; }
-    const newPayments = [...payments, pmt];
-    setPayments(newPayments);
-    const totalPaid = newPayments.reduce((s: number, p: any) => s + (p.amount ?? 0), 0);
-    if (totalPaid >= (invoice.total ?? 0)) {
-      await updateStatus("paid");
-    }
-    setPaymentAmount("");
-    setPaymentMethod("cash");
-    setPaymentNote("");
+    if (paymentSaving) return;
+    let cents: number;
+    try { cents = moneyCents(paymentAmount); }
+    catch { setPaymentError("Enter an amount with no more than two decimal places."); return; }
+    if (cents <= 0) { setPaymentError("Enter a positive amount."); return; }
+    if (cents > Math.round(invoiceBalance(invoice) * 100)) { setPaymentError("Payment exceeds the remaining balance."); return; }
+    setPaymentSaving(true); setPaymentError(null);
+    const { data, error } = await supabase.rpc("record_invoice_payment", {
+      _invoice_id: invoice.id, _payment_id: paymentRequestId, _amount: cents / 100,
+      _method: paymentMethod, _note: paymentNote.trim() || null,
+    });
     setPaymentSaving(false);
+    if (error || !data) { setPaymentError(error?.message ?? "Could not save the payment. Retry with the same details."); return; }
+    setInvoice(data.invoice); setPayments(data.payments);
+    setPaymentRequestId(crypto.randomUUID());
+    setPaymentAmount(""); setPaymentMethod("cash"); setPaymentNote("");
     setShowPaymentModal(false);
   }
 
   async function updateStatus(status: string) {
+    if (statusSaving) return false;
+    setStatusSaving(true); setActionError(null);
     const updates: any = { status };
-    if (status === "sent") updates.sent_at = new Date().toISOString();
-    if (status === "paid") updates.paid_at = new Date().toISOString();
-    const { data } = await supabase.from("invoices").update(updates).eq("id", invoice.id).select().single();
-    if (data) setInvoice(data);
+    if (status === "sent") updates.sent_at = invoice.sent_at ?? new Date().toISOString();
+    const { data, error } = await supabase.from("invoices").update(updates).eq("id", invoice.id).select().single();
+    setStatusSaving(false);
+    if (error) { setActionError(error.message); return false; }
+    setInvoice(data); return true;
   }
 
   function openEdit() {
+    setActionError(null);
     setEditItems((invoice.line_items ?? []).map((li: any) => ({ ...li })));
     setEditNotes(invoice.notes ?? "");
     setEditDueAt(invoice.due_at ?? "");
     setShowEditModal(true);
   }
   function updateEditItem(idx: number, field: string, value: string) {
-    setEditItems((prev) => prev.map((li, i) => i === idx ? { ...li, [field]: field === "description" ? value : Number(value) } : li));
+    setEditItems((prev) => prev.map((li, i) => i === idx ? { ...li, [field]: value } : li));
   }
   async function saveEdit() {
+    if (editSaving) return;
+    setActionError(null);
+    let normalized;
+    try { normalized = normalizeLineItems(editItems); }
+    catch (error) { setActionError(error instanceof Error ? error.message : "Check line items."); return; }
+    if (normalized.total < Number(invoice.paid_total ?? 0)) { setActionError("Total cannot be less than payments already recorded."); return; }
     setEditSaving(true);
-    const newTotal = editItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
-    const { data } = await supabase.from("invoices")
-      .update({ line_items: editItems, notes: editNotes || null, due_at: editDueAt || null, total: newTotal })
+    const { data, error } = await supabase.from("invoices")
+      .update({ line_items: normalized.items, notes: editNotes || null, due_at: editDueAt || null, total: normalized.total })
       .eq("id", invoice.id).select().single();
-    if (data) setInvoice(data);
     setEditSaving(false);
-    setShowEditModal(false);
+    if (error) { setActionError(error.message); return; }
+    setInvoice(data); setShowEditModal(false);
   }
 
   async function handleCreatePaymentLink() {
@@ -151,6 +152,7 @@ export function InvoiceDetailPage() {
       invoiceId: invoice.id,
       lineItems: lineItems,
       total: subtotal,
+      paidTotal: Number(invoice.paid_total ?? 0),
       dueAt: invoice.due_at,
       notes: invoice.notes,
     });
@@ -158,7 +160,7 @@ export function InvoiceDetailPage() {
     const result = await sendEmail({ to: sendTo, subject, html, type: "invoice", recordId: invoice.id });
 
     if (result.success) {
-      await updateStatus("sent");
+      if (!await updateStatus("sent")) { setSending(false); setSendResult({ success: false, message: "Email sent, but the invoice status could not be saved. Refresh before retrying." }); return; }
       setSendResult({ success: true, message: `Invoice sent to ${sendTo}` });
       setTimeout(() => { setShowSendModal(false); setSendResult(null); }, 2000);
     } else {
@@ -183,9 +185,9 @@ export function InvoiceDetailPage() {
   );
 
   const lineItems: any[] = invoice.line_items ?? [];
-  const subtotal = invoice.total ?? lineItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
-  const totalPaid = payments.reduce((s: number, p: any) => s + (p.amount ?? 0), 0);
-  const balanceDue = Math.max(0, subtotal - totalPaid);
+  const subtotal = Number(invoice.total ?? previewTotal(lineItems));
+  const totalPaid = Number(invoice.paid_total ?? 0);
+  const balanceDue = invoiceBalance(invoice);
   const PAYMENT_METHODS = ["cash", "check", "card", "venmo", "zelle", "other"];
 
   return (
@@ -224,7 +226,7 @@ export function InvoiceDetailPage() {
               </div>
               <p className="text-[13px] text-ink-soft text-right">{li.quantity}</p>
               <p className="text-[13px] text-ink-soft text-right">${Number(li.unitPrice).toFixed(2)}</p>
-              <p className="text-[13px] font-semibold text-ink text-right">${(li.quantity * li.unitPrice).toFixed(2)}</p>
+              <p className="text-[13px] font-semibold text-ink text-right">${lineAmount(li.quantity, li.unitPrice).toFixed(2)}</p>
             </div>
           ))}
         </div>
@@ -279,7 +281,7 @@ export function InvoiceDetailPage() {
             </div>
           </div>
         ) : (
-          <p className="px-5 py-4 text-[13px] text-ink-quiet">No payments logged yet.</p>
+          <p className="px-5 py-4 text-[13px] text-ink-quiet">No payments logged yet. Balance due: ${balanceDue.toFixed(2)}</p>
         )}
       </div>
 
@@ -299,7 +301,11 @@ export function InvoiceDetailPage() {
         </div>
       )}
 
+      {actionError && !showEditModal && <p role="alert" className="mb-4 text-red-700">{actionError}</p>}
       <div className="flex gap-2 flex-wrap">
+        {invoice.job_id && <Link to={`/jobs/${invoice.job_id}`} className="text-sm underline">View job</Link>}
+        {invoice.estimate_id && <Link to={`/estimates/${invoice.estimate_id}`} className="text-sm underline">View estimate</Link>}
+        {invoice.status === "draft" && <Button size="sm" variant="secondary" className="w-auto" disabled={statusSaving} onClick={() => updateStatus("sent")}>Mark as Sent</Button>}
         {invoice.status !== "paid" && invoice.status !== "voided" && (
           <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowSendModal(true)}>
             <Mail className="w-3.5 h-3.5" /> Email to Customer
@@ -313,17 +319,11 @@ export function InvoiceDetailPage() {
           </Button>
         )}
         {["sent", "overdue"].includes(invoice.status) && (
-          <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" onClick={async () => {
-            await supabase.from("invoice_payments").insert({
-              invoice_id: invoice.id, business_id: businessId, amount: subtotal - totalPaid,
-              method: "other", note: "Marked paid manually",
-              paid_at: new Date().toISOString(),
-            });
-            await updateStatus("paid");
-            const { data: pmts } = await supabase.from("invoice_payments").select("*").eq("invoice_id", invoice.id).eq("business_id", businessId).order("paid_at");
-            if (pmts) setPayments(pmts);
+          <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" onClick={() => {
+            setPaymentAmount(balanceDue.toFixed(2)); setPaymentMethod("other");
+            setPaymentNote("Remaining balance received manually"); setPaymentError(null); setShowPaymentModal(true);
           }}>
-            <CheckCircle2 className="w-3.5 h-3.5" /> Mark as Paid
+            <CheckCircle2 className="w-3.5 h-3.5" /> Record Remaining Payment
           </Button>
         )}
         {invoice.status !== "paid" && invoice.status !== "voided" && (
@@ -342,6 +342,7 @@ export function InvoiceDetailPage() {
               <button onClick={() => setShowEditModal(false)} className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet"><X className="w-4 h-4" /></button>
             </div>
             <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+              {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
               {/* Due date */}
               <div>
                 <label className="block text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-1.5">Due Date</label>
@@ -379,7 +380,7 @@ export function InvoiceDetailPage() {
                         </div>
                         <div>
                           <label className="block text-[10px] font-semibold text-ink-quiet uppercase mb-1">Qty</label>
-                          <input type="number" min="1" value={li.quantity} onChange={(e) => updateEditItem(idx, "quantity", e.target.value)}
+                          <input type="number" min="0.001" step="0.001" value={li.quantity} onChange={(e) => updateEditItem(idx, "quantity", e.target.value)}
                             className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none" />
                         </div>
                         <div>
@@ -388,14 +389,14 @@ export function InvoiceDetailPage() {
                             className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none" />
                         </div>
                       </div>
-                      <p className="text-[12px] text-ink-quiet text-right">Line total: <span className="font-semibold text-ink">${(li.quantity * li.unitPrice).toFixed(2)}</span></p>
+                      <p className="text-[12px] text-ink-quiet text-right">Line total: <span className="font-semibold text-ink">${lineAmount(li.quantity, li.unitPrice).toFixed(2)}</span></p>
                     </div>
                   ))}
                 </div>
                 {editItems.length > 0 && (
                   <div className="flex items-center justify-between mt-3 px-1">
                     <p className="text-[13px] font-semibold text-ink">Total</p>
-                    <p className="text-[18px] font-bold text-ink">${editItems.reduce((s, li) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0).toFixed(2)}</p>
+                    <p className="text-[18px] font-bold text-ink">${previewTotal(editItems).toFixed(2)}</p>
                   </div>
                 )}
               </div>
@@ -430,6 +431,7 @@ export function InvoiceDetailPage() {
               </button>
             </div>
             <div className="px-6 py-5 space-y-4">
+              <p className="text-[12px] text-ink-quiet">Record money already received. This does not charge a card.</p>
               <div>
                 <label className="block text-[12px] font-semibold text-ink-quiet mb-1.5">Amount Received</label>
                 <div className="relative">

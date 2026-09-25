@@ -10,6 +10,8 @@ import { Plus, Search, Clock, ChevronDown, X, Loader2, RefreshCw } from "lucide-
 
 const STATUS_FILTERS: { label: string; value: JobStatus | "all" }[] = [
   { label: "All", value: "all" },
+  { label: "Draft", value: "draft" },
+  { label: "Cancelled", value: "cancelled" },
   { label: "Quoted", value: "quoted" },
   { label: "Scheduled", value: "scheduled" },
   { label: "In Progress", value: "in-progress" },
@@ -71,6 +73,7 @@ export function JobsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<JobStatus | "all">("all");
   const [query, setQuery] = useState("");
@@ -87,11 +90,12 @@ export function JobsPage() {
   const [price, setPrice] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { if (businessId) loadData(); }, [businessId]);
 
   useEffect(() => {
     const prefill = (location.state as any)?.prefillCustomerId;
-    if (prefill) { setCustomerId(prefill); setShowModal(true); window.history.replaceState({}, ""); }
+    const day = (location.state as any)?.prefillDate;
+    if (prefill || day) { if (prefill) setCustomerId(prefill); if (day) setScheduledDate(day); setShowModal(true); window.history.replaceState({}, ""); }
   }, [location.state]);
 
   async function loadData() {
@@ -106,6 +110,9 @@ export function JobsPage() {
       custQ = custQ.eq("business_id", businessId);
     }
     const [jobRes, custRes] = await Promise.all([jobQ, custQ]);
+    const error = jobRes.error || custRes.error;
+    setLoadError(error?.message ?? null);
+    if (error) { setLoading(false); return; }
     if (jobRes.data) setJobList(jobRes.data.map(rowToJob));
     if (custRes.data) setCustomers(custRes.data);
     setLoading(false);
@@ -134,12 +141,15 @@ export function JobsPage() {
     const e: Record<string, string> = {};
     if (!customerId) e.customerId = "Required";
     if (!title.trim()) e.title = "Required";
+    if (scheduledTime && !scheduledDate) e.date = "Choose a date before setting a time.";
+    if (recurring !== "none" && !scheduledDate) e.date = "Repeating jobs need a starting date.";
     return e;
   };
 
   const handleSubmit = async () => {
+    if (saving || !businessId) return;
     const e = validate();
-    if (Object.keys(e).length) { setErrors(e); return; }
+    if (Object.keys(e).length) { setErrors(e); setSaveError(Object.values(e).join(" ")); return; }
     setSaving(true);
     setSaveError(null);
 
@@ -190,7 +200,8 @@ export function JobsPage() {
   });
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-8">
+      {loadError && <p role="alert" className="text-red-700">Could not load jobs: {loadError} <button onClick={loadData}>Retry</button></p>}
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-[22px] font-semibold text-ink">Jobs</h1>

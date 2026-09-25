@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import { invalidateServicesCache } from "@/lib/services";
 import { startConnectOnboarding } from "@/lib/stripe";
 import {
   Leaf, ArrowRight, ArrowLeft, Check, Loader2,
@@ -31,7 +32,8 @@ function ProgressDots({ current }: { current: number }) {
 }
 
 export function OnboardingWizard() {
-  const { business } = useAuth();
+  const { business, refreshBusiness } = useAuth();
+  const [saveError, setSaveError] = useState<string | null>(null);
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("welcome");
   const [completing, setCompleting] = useState(false);
@@ -44,7 +46,6 @@ export function OnboardingWizard() {
 
   // Service step
   const [serviceName, setServiceName] = useState("");
-  const [servicePrice, setServicePrice] = useState("");
   const [savingService, setSavingService] = useState(false);
   const [serviceAdded, setServiceAdded] = useState(false);
 
@@ -58,7 +59,10 @@ export function OnboardingWizard() {
   async function completeOnboarding() {
     if (!business?.id) return;
     setCompleting(true);
-    await supabase.from("businesses").update({ onboarding_complete: true }).eq("id", business.id);
+    setSaveError(null);
+    const { error } = await supabase.from("businesses").update({ onboarding_complete: true }).eq("id", business.id).select("id").single();
+    if (error) { setSaveError(error.message); setCompleting(false); return; }
+    await refreshBusiness();
     setCompleting(false);
     navigate("/", { replace: true });
   }
@@ -66,29 +70,37 @@ export function OnboardingWizard() {
   async function saveProfile() {
     if (!bizName.trim() || !business?.id) return;
     setSavingProfile(true);
-    await Promise.all([
-      supabase.from("businesses").update({ name: bizName.trim() }).eq("id", business.id),
+    setSaveError(null);
+    const results = await Promise.all([
+      supabase.from("businesses").update({ name: bizName.trim() }).eq("id", business.id).select("id").single(),
       supabase.from("company_settings").upsert({
         id: business.id,
         business_name: bizName.trim(),
         phone: phone.trim() || null,
+        contact_phone: phone.trim() || null,
         address: address.trim() || null,
       }),
     ]);
     setSavingProfile(false);
+    const error = results.find((r) => r.error)?.error;
+    if (error) { setSaveError(error.message); return; }
+    await refreshBusiness();
     setStep("service");
   }
 
   async function saveService() {
     if (!serviceName.trim() || !business?.id) return;
     setSavingService(true);
-    await supabase.from("services").insert({
+    setSaveError(null);
+    const { error } = await supabase.from("services").insert({
       business_id: business.id,
-      name: serviceName.trim(),
-      price: parseFloat(servicePrice) || null,
-      unit: "job",
+      label: serviceName.trim(),
+      value: serviceName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || crypto.randomUUID(),
+      active: true,
     });
     setSavingService(false);
+    if (error) { setSaveError(error.message); return; }
+    invalidateServicesCache();
     setServiceAdded(true);
     setTimeout(() => setStep("stripe"), 800);
   }
@@ -105,6 +117,7 @@ export function OnboardingWizard() {
   return (
     <div className="min-h-screen bg-paper-warm flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-lg">
+        {saveError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-red-700">{saveError}</p>}
         {/* Logo */}
         <div className="flex items-center justify-center gap-2.5 mb-8">
           <div className="w-9 h-9 rounded-xl bg-moss flex items-center justify-center">
@@ -244,21 +257,7 @@ export function OnboardingWizard() {
                   className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink transition-colors"
                 />
               </div>
-              <div>
-                <label className="block text-[12px] font-semibold text-ink-quiet mb-1.5">Default price</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-ink-quiet">$</span>
-                  <input
-                    value={servicePrice}
-                    onChange={(e) => setServicePrice(e.target.value)}
-                    placeholder="75.00"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    className="w-full pl-7 pr-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink transition-colors"
-                  />
-                </div>
-              </div>
+              <p className="text-[13px] text-ink-quiet">Set prices when preparing an estimate or job.</p>
 
               {/* Quick-pick suggestions */}
               <div>

@@ -1,3 +1,4 @@
+import { PrivateImage, newFilePath, deletePrivateMedia } from "@/lib/privateStorage";
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -57,7 +58,7 @@ export function MediaPage() {
   // delete
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { if (businessId) loadAll(); }, [businessId]);
 
   async function loadAll() {
     setLoading(true);
@@ -139,8 +140,7 @@ export function MediaPage() {
       (uploadJobId ? jobs.find((j) => j.id === uploadJobId)?.customer_id : undefined) || null;
 
     for (const file of uploadFiles) {
-      const ext = file.name.split(".").pop();
-      const path = `${uploadJobId || "no-job"}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const path = newFilePath(businessId, uploadJobId || "no-job", file);
 
       const { error: storageErr } = await supabase.storage
         .from("job-media")
@@ -148,18 +148,21 @@ export function MediaPage() {
 
       if (storageErr) { setUploadError(storageErr.message); setUploading(false); return; }
 
-      const { data: urlData } = supabase.storage.from("job-media").getPublicUrl(path);
-
-      await supabase.from("job_media").insert({
+      const { error: recordError } = await supabase.from("job_media").insert({
         business_id: businessId,
         job_id: uploadJobId || null,
         customer_id: resolvedCustomerId,
         tag: uploadTag,
-        url: urlData.publicUrl,
+        url: path,
         file_name: file.name,
         file_type: file.type,
         notes: uploadNotes.trim() || null,
       });
+      if (recordError) {
+        await supabase.storage.from("job-media").remove([path]);
+        setUploadError(recordError.message); setUploading(false); return;
+      }
+      setUploadFiles((remaining) => remaining.filter((f) => f !== file));
     }
 
     setUploading(false);
@@ -169,11 +172,11 @@ export function MediaPage() {
 
   async function handleDelete(item: MediaItem) {
     setDeletingId(item.id);
-    const parts = item.url.split("/job-media/");
-    if (parts[1]) await supabase.storage.from("job-media").remove([parts[1]]);
-    await supabase.from("job_media").delete().eq("id", item.id);
-    setMedia((prev) => prev.filter((m) => m.id !== item.id));
-    setDeletingId(null);
+    try {
+      await deletePrivateMedia(item.id, item.url);
+      setMedia((prev) => prev.filter((m) => m.id !== item.id));
+    } catch (error) { setUploadError(error instanceof Error ? error.message : "Could not delete this file. Please retry."); }
+    finally { setDeletingId(null); }
   }
 
   const filtered = media.filter((m) => {
@@ -308,7 +311,7 @@ export function MediaPage() {
                     <div key={m.id} className="overflow-hidden bg-paper-dark">
                       {m.file_type?.startsWith("video/")
                         ? <div className="w-full h-full flex items-center justify-center min-h-[60px]"><Play className="w-5 h-5 text-ink-quiet" /></div>
-                        : <img src={m.url} alt="" className="w-full h-full object-cover" loading="lazy" />}
+                        : <PrivateImage src={m.url} alt="" className="w-full h-full object-cover" loading="lazy" />}
                     </div>
                   ))}
                   {/* Fill empty slots */}
@@ -511,3 +514,10 @@ export function MediaPage() {
     </div>
   );
 }
+
+const TAG_COLORS: Record<MediaTag, string> = {
+  before: "bg-amber-50 text-amber-700 border-amber-200",
+  after: "bg-green-50 text-green-700 border-green-200",
+  general: "bg-paper-warm text-ink-soft border-paper-deep",
+};
+const TAG_LABELS: Record<MediaTag, string> = { before: "Before", after: "After", general: "General" };

@@ -57,7 +57,7 @@ export default function App() {
         {/* Actions */}
         <div className="flex gap-3">
           <Button>Get started</Button>
-          <Button variant="outline">Learn more</Button>
+          <Button variant="outline-solid">Learn more</Button>
         </div>
       </main>
     </div>

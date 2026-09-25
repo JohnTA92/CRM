@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { Leaf, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 
 export function SignupPage() {
   const { signUp } = useAuth();
-  const navigate = useNavigate();
 
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
@@ -24,7 +23,7 @@ export function SignupPage() {
     if (err) { setError(err); return; }
     // Supabase may require email confirmation depending on project settings
     setNeedsConfirmation(true);
-    setTimeout(() => navigate("/", { replace: true }), 2000);
+
   }
 
   if (needsConfirmation) {
@@ -36,8 +35,9 @@ export function SignupPage() {
           </div>
           <h1 className="text-[20px] font-semibold text-ink mb-2">Account created!</h1>
           <p className="text-[13px] text-ink-quiet">
-            Check your email to confirm your account, then you'll be redirected automatically.
+            Check your email to confirm your account, then sign in to open your business.
           </p>
+          <Link to="/login" className="block mt-4 underline">Go to sign in</Link>
         </div>
       </div>
     );

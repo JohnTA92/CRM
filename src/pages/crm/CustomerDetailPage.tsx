@@ -1,3 +1,4 @@
+import { balanceDue, sumMoney } from "@/lib/money";
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
@@ -439,7 +440,7 @@ export function CustomerDetailPage() {
     </div>
   );
 
-  const totalSpend = invoices.filter((i) => i.status === "paid").reduce((s, i) => s + (i.total ?? 0), 0);
+  const totalSpend = sumMoney(invoices, (i) => Number(i.paid_total ?? 0));
   const serviceTypes: string[] = customer.service_types ?? [];
 
   return (
@@ -815,7 +816,7 @@ export function CustomerDetailPage() {
                   {inv.due_at ? ` · Due ${inv.due_at}` : ""}
                 </p>
               </div>
-              <p className="text-[13px] font-semibold text-ink mr-3">${Number(inv.total).toLocaleString()}</p>
+              <div className="text-right mr-3"><p className="text-[13px] font-semibold text-ink">${Number(inv.total).toFixed(2)}</p><p className="text-[11px] text-ink-quiet">${balanceDue(inv).toFixed(2)} remaining</p></div>
               <Badge variant={invStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</Badge>
             </Link>
           ))}
@@ -837,8 +838,8 @@ export function CustomerDetailPage() {
         invoices.forEach((i) => {
           if (i.created_at) events.push({ date: i.created_at.split("T")[0], label: "Invoice created", sub: `$${Number(i.total).toLocaleString()}`, icon: Receipt, color: "bg-paper-warm text-ink-soft", link: `/invoices/${i.id}` });
           if (i.sent_at) events.push({ date: i.sent_at.split("T")[0], label: "Invoice sent", sub: `$${Number(i.total).toLocaleString()} · due ${i.due_at ?? "—"}`, icon: Send, color: "bg-[#fff3e0] text-[#e65100]", link: `/invoices/${i.id}` });
-          if (i.paid_at) events.push({ date: i.paid_at.split("T")[0], label: "Payment received", sub: `$${Number(i.total).toLocaleString()}`, icon: CheckCircle2, color: "bg-[#e8f5e9] text-[#2e7d32]", link: `/invoices/${i.id}` });
-          if (i.status === "overdue") events.push({ date: i.due_at ?? i.created_at?.split("T")[0] ?? "", label: "Invoice overdue", sub: `$${Number(i.total).toLocaleString()} unpaid`, icon: AlertCircle, color: "bg-[#ffebee] text-[#c62828]", link: `/invoices/${i.id}` });
+          if (i.paid_at) events.push({ date: i.paid_at.split("T")[0], label: "Invoice paid in full", sub: `$${Number(i.paid_total ?? 0).toLocaleString()} total received`, icon: CheckCircle2, color: "bg-[#e8f5e9] text-[#2e7d32]", link: `/invoices/${i.id}` });
+          if (i.status === "overdue") events.push({ date: i.due_at ?? i.created_at?.split("T")[0] ?? "", label: "Invoice overdue", sub: `$${balanceDue(i).toFixed(2)} unpaid`, icon: AlertCircle, color: "bg-[#ffebee] text-[#c62828]", link: `/invoices/${i.id}` });
         });
         const sorted = events.filter((e) => e.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12);
         if (sorted.length === 0) return null;

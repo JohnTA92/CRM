@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { normalizeLineItems, moneyCents, lineAmount, balanceDue, sumMoney } from '../../../src/lib/money.ts';
+const item={description:'Service',type:'service',quantity:1,unitPrice:100};
+assert.equal(lineAmount(.5,.01),.01);
+assert.equal(lineAmount(1.005,1),1.01);
+assert.equal(normalizeLineItems([{...item,quantity:.5,unitPrice:.01},{...item,quantity:1.005,unitPrice:1}]).total,1.02);
+for(const quantity of ['',0,-1,'NaN','Infinity','1.0001']) assert.throws(()=>normalizeLineItems([{...item,quantity}]));
+for(const unitPrice of ['','-1','NaN','Infinity','1.001']) assert.throws(()=>normalizeLineItems([{...item,unitPrice}]));
+assert.throws(()=>normalizeLineItems([]));
+assert.throws(()=>normalizeLineItems([{...item,description:'  '}]));
+assert.equal(moneyCents('0.29'),29);
+assert.equal(balanceDue({total:100,paid_total:40}),60);
+assert.equal(balanceDue({total:.3,paid_total:.1}),.2);
+assert.equal(balanceDue({total:100,status:'voided'}),0);
+assert.equal(sumMoney([.1,.2],v=>v),.3);
+console.log('PASS: client money precision, validation and partial balances.');

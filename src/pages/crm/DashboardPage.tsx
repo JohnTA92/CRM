@@ -1,3 +1,4 @@
+import { balanceDue, sumMoney } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
@@ -123,6 +124,8 @@ export function DashboardPage() {
   const [period, setPeriod] = useState<"today" | "wtd" | "mtd" | "qtd">("mtd");
 
   const [jobs, setJobs] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [estimates, setEstimates] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
@@ -132,18 +135,22 @@ export function DashboardPage() {
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("");
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { if (businessId) loadAll(); }, [businessId]);
 
   async function loadAll() {
-    setLoading(true);
-    const [jobRes, invRes, estRes, custRes, expRes, settingsRes] = await Promise.all([
+    setLoading(true); setLoadError(null);
+    const [jobRes, invRes, estRes, custRes, expRes, settingsRes, pmtRes] = await Promise.all([
       supabase.from("jobs").select("*").eq("business_id", businessId),
       supabase.from("invoices").select("*").eq("business_id", businessId),
       supabase.from("estimates").select("*").eq("business_id", businessId),
       supabase.from("customers").select("id, name, archived").eq("business_id", businessId),
       supabase.from("expenses").select("*").eq("business_id", businessId),
-      supabase.from("company_settings").select("monthly_goal").eq("id", businessId).single(),
+      supabase.from("company_settings").select("monthly_goal").eq("id", businessId).maybeSingle(),
+      supabase.from("invoice_payments").select("*").eq("business_id", businessId),
     ]);
+    const error = [jobRes, invRes, estRes, custRes, expRes, settingsRes, pmtRes].find((r) => r.error)?.error;
+    if (error) { setLoadError(error.message); setLoading(false); return; }
+    setPayments(pmtRes.data ?? []);
     if (jobRes.data) setJobs(jobRes.data);
     if (invRes.data) setInvoices(invRes.data);
     if (estRes.data) setEstimates(estRes.data);
@@ -159,17 +166,17 @@ export function DashboardPage() {
 
   // ── KPI calculations ──
   const paidInvoices = invoices.filter((i) => i.status === "paid");
-  const periodPaid = paidInvoices.filter((i) => (i.paid_at ?? i.created_at)?.split("T")[0] >= periodStart);
-  const priorPaid = paidInvoices.filter((i) => {
+  const periodPaid = payments.filter((p) => p.paid_at?.split("T")[0] >= periodStart && p.paid_at?.split("T")[0] <= today);
+  const priorPaid = payments.filter((i) => {
     const d = (i.paid_at ?? i.created_at)?.split("T")[0];
     return d >= prior.from && d <= prior.to;
   });
-  const revenue = periodPaid.reduce((s: number, i: any) => s + (i.total ?? 0), 0);
-  const priorRevenue = priorPaid.reduce((s: number, i: any) => s + (i.total ?? 0), 0);
+  const revenue = sumMoney(periodPaid, (p) => p.amount);
+  const priorRevenue = sumMoney(priorPaid, (p) => p.amount);
   const revTrend = priorRevenue > 0 ? Math.round(((revenue - priorRevenue) / priorRevenue) * 100) : null;
 
   const completedJobs = jobs.filter((j) =>
-    ["complete", "invoiced"].includes(j.status) && (j.updated_at ?? j.created_at)?.split("T")[0] >= periodStart
+    ["complete", "invoiced"].includes(j.status) && (j.completed_at ?? j.scheduled_date)?.split("T")[0] >= periodStart
   );
   const priorCompleted = jobs.filter((j) => {
     const d = (j.updated_at ?? j.created_at)?.split("T")[0];
@@ -201,7 +208,7 @@ export function DashboardPage() {
       const total = lineItems.reduce((ls: number, li: any) => ls + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
       return s + (e.total ?? total ?? 0);
     }, 0);
-  const unpaidValue = unpaidInvoices.reduce((s: number, i: any) => s + (i.total ?? 0), 0);
+  const unpaidValue = sumMoney(unpaidInvoices, balanceDue);
 
   // ── Estimate conversion ──
   const sentEstimates = estimates.filter((e) => e.status !== "draft");
@@ -222,8 +229,8 @@ export function DashboardPage() {
     alerts.push({ type: "warn", text: `${completedNoInvoice.length} completed job${completedNoInvoice.length > 1 ? "s" : ""} with no invoice created`, link: "/jobs" });
   const overdueInvs = invoices.filter((i) => i.status === "overdue");
   if (overdueInvs.length > 0)
-    alerts.push({ type: "error", text: `${overdueInvs.length} overdue invoice${overdueInvs.length > 1 ? "s" : ""} — ${fmt$(overdueInvs.reduce((s: number, i: any) => s + (i.total ?? 0), 0))} outstanding`, link: "/invoices" });
-  const staleInvs = invoices.filter((i) => i.status === "sent" && i.sent_at && daysBetween(i.sent_at.split("T")[0], today) > 14);
+    alerts.push({ type: "error", text: `${overdueInvs.length} overdue invoice${overdueInvs.length > 1 ? "s" : ""} — ${fmt$(sumMoney(overdueInvs, balanceDue))} outstanding`, link: "/invoices" });
+  const staleInvs = invoices.filter((i) => i.status === "sent" && Number(i.paid_total ?? 0) === 0 && i.sent_at && daysBetween(i.sent_at.split("T")[0], today) > 14);
   if (staleInvs.length > 0)
     alerts.push({ type: "warn", text: `${staleInvs.length} invoice${staleInvs.length > 1 ? "s" : ""} sent 14+ days ago with no payment`, link: "/invoices" });
   const pendingEsts = estimates.filter((e) => e.status === "sent");
@@ -251,9 +258,7 @@ export function DashboardPage() {
   customers.forEach((c: any) => { customerNames[c.id] = c.name; });
 
   // ── Monthly goal (always MTD) ──
-  const mtdRevenue = paidInvoices
-    .filter((i) => (i.paid_at ?? i.created_at)?.startsWith(today.slice(0, 7)))
-    .reduce((s: number, i: any) => s + (i.total ?? 0), 0);
+  const mtdRevenue = sumMoney(payments.filter((p) => p.paid_at?.startsWith(today.slice(0, 7)) && p.paid_at?.split("T")[0] <= today), (p) => p.amount);
   const goalPct = monthlyGoal > 0 ? Math.min(100, Math.round((mtdRevenue / monthlyGoal) * 100)) : 0;
   const goalGap = monthlyGoal > 0 ? Math.max(0, monthlyGoal - mtdRevenue) : 0;
 
@@ -265,6 +270,8 @@ export function DashboardPage() {
     }
     setEditingGoal(false);
   }
+
+  if (loadError) return <div className="p-8"><h1 className="text-xl font-semibold">Dashboard</h1><p role="alert">Could not load financial data: {loadError}</p><button onClick={loadAll}>Retry</button></div>;
 
   return (
     <div className="p-8">
@@ -349,12 +356,12 @@ export function DashboardPage() {
       {/* ── Financial Health Strip ── */}
       {(() => {
         const allPaidInvoices = invoices.filter((i: any) => i.status === "paid");
-        const totalRevenue = allPaidInvoices.reduce((s: number, i: any) => s + (i.total ?? 0), 0);
+        const totalRevenue = sumMoney(payments, (p) => p.amount);
         const totalExpensesAll = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
         const allGrossProfit = totalRevenue - totalExpensesAll;
         const overallMargin = totalRevenue > 0 ? Math.round((allGrossProfit / totalRevenue) * 100) : null;
         const allPaidCount = allPaidInvoices.length;
-        const allAvgTicket = allPaidCount > 0 ? Math.round(totalRevenue / allPaidCount) : 0;
+        const allAvgTicket = allPaidCount > 0 ? Math.round(sumMoney(allPaidInvoices, (i) => Number(i.total)) / allPaidCount) : 0;
         const highestService = Object.entries(serviceStats).sort(([, a], [, b]) => (b.revenue / Math.max(1, b.count)) - (a.revenue / Math.max(1, a.count)))[0];
         return (
           <div className="bg-white rounded-xl border border-paper-deep mb-6 overflow-hidden">
@@ -363,7 +370,7 @@ export function DashboardPage() {
             </div>
             <div className="grid grid-cols-4 divide-x divide-paper-deep">
               <div className="px-5 py-4">
-                <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Gross Margin</p>
+                <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Cash Margin</p>
                 <p className={`text-[24px] font-bold leading-none ${
                   overallMargin === null ? "text-ink-quiet"
                   : overallMargin >= 50 ? "text-[#2e7d32]"
@@ -380,7 +387,7 @@ export function DashboardPage() {
                 <p className="text-[11px] text-ink-quiet mt-1">{allPaidCount} paid jobs</p>
               </div>
               <div className="px-5 py-4">
-                <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Gross Profit</p>
+                <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Net Cash Flow</p>
                 <p className={`text-[24px] font-bold leading-none ${allGrossProfit >= 0 ? "text-[#1565c0]" : "text-[#c62828]"}`}>
                   {allGrossProfit < 0 ? "-" : ""}{fmt$(Math.abs(allGrossProfit))}
                 </p>
@@ -413,13 +420,13 @@ export function DashboardPage() {
           </Link>
         </div>
 
-        {/* Top row: Revenue / Expenses / Gross Profit */}
+        {/* Top row: Revenue / Expenses / Net Cash Flow */}
         <div className="grid grid-cols-3 divide-x divide-paper-deep border-b border-paper-deep">
           {[
-            { label: "Revenue", value: revenue, color: "text-[#2e7d32]", sub: "paid invoices" },
+            { label: "Revenue", value: revenue, color: "text-[#2e7d32]", sub: "payments received" },
             { label: "Expenses", value: totalExpenses, color: "text-[#c62828]", sub: `${periodExpenses.length} entries` },
             {
-              label: "Gross Profit",
+              label: "Net Cash Flow",
               value: grossProfit,
               color: grossProfit >= 0 ? "text-[#1565c0]" : "text-[#c62828]",
               sub: `${marginPct}% margin`,
@@ -641,7 +648,7 @@ export function DashboardPage() {
                     </span>
                   </div>
                   <p className={`text-[14px] font-semibold ${bucket.textColor}`}>
-                    {fmt$(bucket.items.reduce((s: number, i: any) => s + (i.total ?? 0), 0))}
+                    {fmt$(sumMoney(bucket.items, balanceDue))}
                   </p>
                 </div>
               ))}

@@ -1,3 +1,4 @@
+import { normalizeLineItems, previewTotal, balanceDue, sumMoney } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
@@ -29,6 +30,7 @@ export function InvoicesPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | "all">("all");
   const [showModal, setShowModal] = useState(false);
@@ -45,10 +47,11 @@ export function InvoicesPage() {
   ]);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { if (businessId) loadData(); }, [businessId]);
 
   async function loadData() {
     setLoading(true);
+    setLoadError(null);
     // Only filter by business_id for a real, authenticated tenant — an empty string
     // is not a valid uuid, so filtering on it with no session errored these queries
     // out silently (empty invoice list, empty customer dropdown).
@@ -59,6 +62,8 @@ export function InvoicesPage() {
       custQ = custQ.eq("business_id", businessId);
     }
     const [invRes, custRes] = await Promise.all([invQ, custQ]);
+    const loadFailure = invRes.error || custRes.error;
+    if (loadFailure) setLoadError(loadFailure.message);
     if (invRes.data) setInvoices(invRes.data.map(rowToInvoice));
     if (custRes.data) setCustomers(custRes.data);
     setLoading(false);
@@ -78,11 +83,11 @@ export function InvoicesPage() {
       dueAt: row.due_at,
       paidAt: row.paid_at,
       total: row.total ?? 0,
+      paidTotal: row.paid_total ?? 0,
     };
   }
 
-  const lineTotal = lineItems.reduce((sum, li) =>
-    sum + (parseFloat(li.quantity) || 0) * (parseFloat(li.unitPrice) || 0), 0);
+  const lineTotal = previewTotal(lineItems);
 
   const addLineItem = () =>
     setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "", type: "service" }]);
@@ -94,36 +99,29 @@ export function InvoicesPage() {
   const validate = () => {
     const e: Record<string, string> = {};
     if (!customerId) e.customerId = "Required";
-    lineItems.forEach((li, i) => {
-      if (!li.description.trim()) e[`li_desc_${i}`] = "Required";
-      if (!li.unitPrice || parseFloat(li.unitPrice) <= 0) e[`li_price_${i}`] = "Required";
-    });
+    try { normalizeLineItems(lineItems); }
+    catch (error) { e.items = error instanceof Error ? error.message : "Check line items."; }
     return e;
   };
 
   const handleSubmit = async () => {
+    if (saving || !businessId) return;
     const e = validate();
-    if (Object.keys(e).length) { setErrors(e); return; }
+    if (Object.keys(e).length) { setErrors(e); setSaveError(e.items ?? "Choose a customer and check the form."); return; }
     setSaving(true);
     setSaveError(null);
 
-    const items: LineItem[] = lineItems.map((li, i) => ({
-      id: `li-${Date.now()}-${i}`,
-      description: li.description.trim(),
-      quantity: parseFloat(li.quantity) || 1,
-      unitPrice: parseFloat(li.unitPrice) || 0,
-      type: li.type,
-    }));
+    const { items, total } = normalizeLineItems(lineItems.map((li) => ({ ...li, id: crypto.randomUUID() })));
 
     const { data, error } = await supabase
       .from("invoices")
       .insert({
-        business_id: businessId || null,
+        business_id: businessId,
         customer_id: customerId,
         status: "draft",
         line_items: items,
         notes: notes.trim() || null,
-        total: lineTotal,
+        total,
         due_at: dueDate || null,
         sent_at: null,
         paid_at: null,
@@ -148,12 +146,13 @@ export function InvoicesPage() {
 
   const getCustomerName = (id: string) => customers.find((c) => c.id === id)?.name ?? "Unknown";
   const filtered = invoices.filter((i) => statusFilter === "all" || i.status === statusFilter);
-  const totalUnpaid = invoices.filter((i) => ["sent", "overdue"].includes(i.status)).reduce((s, i) => s + i.total, 0);
-  const totalPaid = invoices.filter((i) => i.status === "paid").reduce((s, i) => s + i.total, 0);
+  const totalUnpaid = sumMoney(invoices.filter((i) => ["sent", "overdue"].includes(i.status)), balanceDue);
+  const totalPaid = sumMoney(invoices, (i) => i.paidTotal ?? 0);
   const overdue = invoices.filter((i) => i.status === "overdue");
 
   return (
     <div className="p-8">
+      {loadError && <p role="alert" className="mb-4 text-red-700">Could not load records: {loadError} <button onClick={loadData}>Retry</button></p>}
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-[22px] font-semibold text-ink">Invoices</h1>
@@ -170,7 +169,7 @@ export function InvoicesPage() {
         <div className="bg-[#fff8e1] border border-[#ffe082] rounded-xl px-5 py-3.5 mb-5 flex items-center gap-3">
           <AlertCircle className="w-4 h-4 text-[#e65100] flex-shrink-0" />
           <p className="text-[13px] text-[#5d3a00] font-medium">
-            {overdue.length} overdue invoice{overdue.length > 1 ? "s" : ""} totaling ${overdue.reduce((s, i) => s + i.total, 0).toLocaleString()}
+            {overdue.length} overdue invoice{overdue.length > 1 ? "s" : ""} totaling ${sumMoney(overdue, balanceDue).toLocaleString()}
           </p>
         </div>
       )}
@@ -223,17 +222,18 @@ export function InvoicesPage() {
                   <div>
                     {inv.status === "paid" ? (
                       <span className="flex items-center gap-1 text-[11px] text-moss font-medium">
-                        <CheckCircle className="w-3.5 h-3.5" /> Paid online
+                        <CheckCircle className="w-3.5 h-3.5" /> Paid
                       </span>
                     ) : inv.status === "sent" ? (
                       <span className="flex items-center gap-1 text-[11px] text-ink-quiet">
-                        <CreditCard className="w-3.5 h-3.5" /> Pay now link
+                        <CreditCard className="w-3.5 h-3.5" /> Awaiting payment
                       </span>
                     ) : (
                       <span className="text-[11px] text-ink-quiet">—</span>
                     )}
                   </div>
-                  <p className="text-[14px] font-semibold text-ink text-right">${inv.total.toLocaleString()}</p>
+                  <div className="text-right"><p className="text-[14px] font-semibold text-ink">${inv.total.toFixed(2)}</p>
+                    <p className="text-[11px] text-ink-quiet">${balanceDue(inv).toFixed(2)} remaining</p></div>
                   <p className="text-[12px] text-ink-quiet text-right">{inv.dueAt ?? "—"}</p>
                   <Badge variant={invStatusBadge(inv.status)}>{invoiceStatusLabel(inv.status)}</Badge>
                 </Link>

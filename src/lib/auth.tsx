@@ -24,6 +24,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<string | null>;
   signUp: (email: string, password: string, businessName: string) => Promise<string | null>;
   signOut: () => Promise<void>;
+  refreshBusiness: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -55,7 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function loadBusiness(userId: string) {
     // Resolve via business_members (owner OR staff), not a raw owner_id match —
     // an owner is just the first business_members row (seeded automatically on
-    // signup below and backfilled for existing businesses), and this is what lets
+    // confirmed signup and backfilled for existing businesses), and this is what lets
     // a future staff member's session resolve a business at all. Staff invite
     // UI/edge function to actually populate a 'staff' row doesn't exist yet — this
     // only fixes the lookup so it works once one exists.
@@ -75,32 +76,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signUp(email: string, password: string, businessName: string): Promise<string | null> {
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email, password,
+      options: { data: { business_name: businessName.trim() } },
+    });
     if (error) return error.message;
     if (!data.user) return "Signup failed — please try again.";
-
-    const { data: biz, error: bizError } = await supabase
-      .from("businesses")
-      .insert({ owner_id: data.user.id, name: businessName.trim() })
-      .select()
-      .single();
-    if (bizError) return bizError.message;
-
-    // Membership is the actual authorization source of truth for every table's
-    // RLS (customers/jobs/invoices/estimates/businesses/company_settings) — without
-    // this row the new owner couldn't see anything they just created.
-    const { error: memberError } = await supabase.from("business_members").insert({
-      business_id: biz.id,
-      user_id: data.user.id,
-      role: "owner",
-    });
-    if (memberError) return memberError.message;
-
-    // Seed default company_settings row for this business
-    await supabase.from("company_settings").upsert({
-      id: biz.id,
-      business_name: businessName.trim(),
-    });
+    // The database provisions the business + owner membership atomically once
+    // email is confirmed. A pending signup has no authenticated write session.
 
     return null;
   }
@@ -113,7 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, business, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, session, business, loading, signIn, signUp, signOut, refreshBusiness: async () => { if (user) await loadBusiness(user.id); } }}>
       {children}
     </AuthContext.Provider>
   );

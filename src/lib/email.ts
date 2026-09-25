@@ -1,3 +1,4 @@
+import { balanceDue, lineAmount } from "@/lib/money";
 import { supabase } from "@/lib/supabase";
 
 export interface LineItem {
@@ -21,6 +22,7 @@ interface EmailInvoiceParams {
   to: string;
   customerName: string;
   invoiceId: string;
+  paidTotal?: number;
   lineItems: LineItem[];
   total: number;
   dueAt?: string;
@@ -56,7 +58,7 @@ function lineItemsTable(lineItems: LineItem[], total: number) {
       </td>
       <td style="padding:12px 16px;border-bottom:1px solid #f5f5f4;text-align:right;font-size:13px;color:#78716c;">${li.quantity}</td>
       <td style="padding:12px 16px;border-bottom:1px solid #f5f5f4;text-align:right;font-size:13px;color:#78716c;">$${Number(li.unitPrice).toFixed(2)}</td>
-      <td style="padding:12px 24px;border-bottom:1px solid #f5f5f4;text-align:right;font-size:13px;font-weight:600;color:#1c1917;">$${(li.quantity * li.unitPrice).toFixed(2)}</td>
+      <td style="padding:12px 24px;border-bottom:1px solid #f5f5f4;text-align:right;font-size:13px;font-weight:600;color:#1c1917;">$${lineAmount(li.quantity, li.unitPrice).toFixed(2)}</td>
     </tr>`).join("");
 
   return `
@@ -124,12 +126,13 @@ export function buildEstimateEmail(params: EmailEstimateParams): { subject: stri
 }
 
 export function buildInvoiceEmail(params: EmailInvoiceParams): { subject: string; html: string } {
-  const subject = `Invoice — $${Number(params.total).toFixed(2)} Due`;
+  const due = balanceDue({ total: params.total, paid_total: params.paidTotal ?? 0 });
+  const subject = `Invoice — $${due.toFixed(2)} Due`;
   const html = emailShell(`
     <tr>
       <td style="background:#1d4ed8;padding:24px 32px;">
         <p style="margin:0;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#bfdbfe;">Invoice</p>
-        <p style="margin:6px 0 0;font-size:28px;font-weight:700;color:#ffffff;">$${Number(params.total).toFixed(2)}</p>
+        <p style="margin:6px 0 0;font-size:28px;font-weight:700;color:#ffffff;">$${due.toFixed(2)} remaining</p>
         ${params.dueAt ? `<p style="margin:4px 0 0;font-size:13px;color:#bfdbfe;">Due ${params.dueAt}</p>` : ""}
       </td>
     </tr>
@@ -145,6 +148,7 @@ export function buildInvoiceEmail(params: EmailInvoiceParams): { subject: string
       <td style="padding:0 32px 24px;">
         <div style="border:1px solid #e7e5e4;border-radius:8px;overflow:hidden;">
           ${lineItemsTable(params.lineItems, params.total)}
+          <p style="padding:16px 24px;">Paid: $${Number(params.paidTotal ?? 0).toFixed(2)} · Balance due: $${due.toFixed(2)}</p>
         </div>
       </td>
     </tr>

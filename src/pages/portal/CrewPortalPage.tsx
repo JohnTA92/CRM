@@ -1,3 +1,4 @@
+import { newFilePath } from "@/lib/privateStorage";
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -69,11 +70,13 @@ export function CrewPortalPage() {
   const [clocking, setClocking] = useState(false);
   const [breaking, setBreaking] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [workElapsed, setWorkElapsed] = useState(0);
   const [breakElapsed, setBreakElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [jobStatusError, setJobStatusError] = useState<string | null>(null);
   // job status updates
   const [updatingJob, setUpdatingJob] = useState<string | null>(null);
 
@@ -127,6 +130,7 @@ export function CrewPortalPage() {
 
   async function load(id: string) {
     setLoading(true);
+    setActionError(null); setNotFound(false);
     try {
       const { data: m } = await supabase.from("crew_members").select("*").eq("id", id).single();
       if (!m) { setNotFound(true); return; }
@@ -141,7 +145,7 @@ export function CrewPortalPage() {
         supabase.from("time_entries")
           .select("*").eq("crew_member_id", id).is("job_id", null)
           .order("clocked_in_at", { ascending: false }),
-        supabase.from("company_settings").select("*").eq("id", "default").single(),
+        supabase.from("company_settings").select("*").eq("id", m.business_id).single(),
         supabase.from("customers").select("id, name, address, city, state, zip"),
       ]);
 
@@ -174,10 +178,10 @@ export function CrewPortalPage() {
     if (!crewId) return;
     setClocking(true);
     const { data, error } = await supabase.from("time_entries").insert({
-      crew_member_id: crewId,
+      business_id: member.business_id, crew_member_id: crewId,
       clocked_in_at: new Date().toISOString(),
     }).select().single();
-    if (error) console.error("Clock in error:", error.message);
+    if (error) setActionError(error.message);
     if (data) setPunches((prev) => [data, ...prev]);
     setClocking(false);
   }
@@ -199,10 +203,10 @@ export function CrewPortalPage() {
     if (!crewId) return;
     setBreaking(true);
     const { data, error } = await supabase.from("time_entries").insert({
-      crew_member_id: crewId, break_type: type,
+      business_id: member.business_id, crew_member_id: crewId, break_type: type,
       clocked_in_at: new Date().toISOString(),
     }).select().single();
-    if (error) console.error("Break start error:", error.message);
+    if (error) setActionError(error.message);
     if (data) setBreaks((prev) => [data, ...prev]);
     setBreaking(false);
   }
@@ -223,8 +227,10 @@ export function CrewPortalPage() {
   }
 
   async function updateJobStatus(jobId: string, status: string) {
+    setJobStatusError(null);
     setUpdatingJob(jobId);
-    const { data } = await supabase.from("jobs").update({ status }).eq("id", jobId).select().single();
+    const { data, error } = await supabase.from("jobs").update({ status }).eq("id", jobId).select().single();
+    if (error) setJobStatusError(error.message);
     if (data) setJobs((prev) => prev.map((j) => j.id === jobId ? { ...j, status: data.status } : j));
     setUpdatingJob(null);
   }
@@ -233,21 +239,19 @@ export function CrewPortalPage() {
     const file = e.target.files?.[0];
     if (!file || !photoJobId || !crewId) return;
     setUploadingJob(photoJobId);
-    const ext = file.name.split(".").pop();
-    const path = `${photoJobId}/${crewId}-${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from("job-media").upload(path, file, { upsert: true });
-    if (!error) {
-      const { data: urlData } = supabase.storage.from("job-media").getPublicUrl(path);
-      await supabase.from("job_media").insert({
-        job_id: photoJobId,
-        url: urlData.publicUrl,
-        file_name: file.name,
-        file_type: file.type,
-        tag: "after",
-        notes: `Uploaded by crew`,
+    const path = newFilePath(member.business_id, photoJobId, file);
+    const { error } = await supabase.storage.from("job-media").upload(path, file);
+    if (error) setPhotoMsg(`Upload failed: ${error.message}`);
+    else {
+      const job = jobs.find((j) => j.id === photoJobId);
+      const { error: recordError } = await supabase.from("job_media").insert({
+        business_id: member.business_id, job_id: photoJobId, customer_id: job?.customer_id,
+        url: path, file_name: file.name, file_type: file.type, tag: "after", notes: "Uploaded by crew",
       });
-      setPhotoMsg("Photo uploaded!");
-      setTimeout(() => setPhotoMsg(null), 3000);
+      if (recordError) {
+        await supabase.storage.from("job-media").remove([path]);
+        setPhotoMsg(`Upload failed: ${recordError.message}`);
+      } else setPhotoMsg("Photo uploaded!");
     }
     setUploadingJob(null);
     setPhotoJobId(null);
@@ -331,13 +335,14 @@ export function CrewPortalPage() {
   if (notFound || !member) return (
     <div className="min-h-screen bg-paper-warm flex flex-col items-center justify-center text-center px-6">
       <AlertCircle className="w-10 h-10 text-ink-quiet opacity-30 mb-3" />
-      <p className="text-[16px] font-semibold text-ink">Portal not found</p>
-      <p className="text-[13px] text-ink-quiet mt-1">This link may be invalid or expired.</p>
+      <p className="text-[16px] font-semibold text-ink">Crew access unavailable</p>
+      <p className="text-[13px] text-ink-quiet mt-1">Sign in with an authorized business staff account. Ask your business owner to check this crew member’s assignment.</p>
     </div>
   );
 
   return (
     <div className="min-h-screen bg-paper-warm">
+      {actionError && <p role="alert" className="p-4 text-red-700">{actionError}</p>}
       {/* hidden file input for photos */}
       <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoUpload} />
 
@@ -757,6 +762,7 @@ export function CrewPortalPage() {
                             <Navigation className="w-3 h-3" /> Directions
                           </a>
                         )}
+                        {jobStatusError && <p role="alert" className="text-red-700">{jobStatusError}</p>}
                         {STATUS_NEXT[job.status] && (
                           <button
                             onClick={() => updateJobStatus(job.id, STATUS_NEXT[job.status])}

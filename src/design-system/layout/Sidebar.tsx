@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
@@ -41,11 +41,16 @@ const navItems = [
   { to: "/media", icon: Camera, label: "Job Media" },
   { to: "/routes", icon: Navigation, label: "Routes" },
   { to: "/crew", icon: HardHat, label: "Crew" },
+  { to: "/employee-preview", icon: Users, label: "Employee Hub" },
   { to: "/scheduling", icon: CalendarCheck, label: "Crew Board" },
   { to: "/revenue", icon: TrendingUp, label: "Revenue" },
 ];
 
 export function Sidebar() {
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { setMenuOpen(false); }, [location.pathname]);
+  useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); }; window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close); }, []);
   const { theme } = useTheme();
   const { user, business, signOut } = useAuth();
   const isAdmin = useIsAdmin();
@@ -70,7 +75,9 @@ export function Sidebar() {
 
   return (
     <>
-    <aside className={cn("fixed top-0 left-0 h-screen w-56 flex flex-col z-40", bg)}>
+    <div className="md:hidden fixed top-0 inset-x-0 h-14 bg-white border-b z-50 flex items-center justify-between px-4"><span className="font-semibold">{businessName}</span><button aria-expanded={menuOpen} aria-controls="crm-sidebar" onClick={()=>setMenuOpen(!menuOpen)} className="border rounded px-3 py-2">{menuOpen ? "Close menu" : "Menu"}</button></div>
+    {menuOpen && <button aria-label="Close navigation" className="md:hidden fixed inset-0 bg-black/30 z-30" onClick={()=>setMenuOpen(false)} />}
+    <aside id="crm-sidebar" className={cn("fixed top-14 md:top-0 left-0 h-[calc(100dvh-3.5rem)] md:h-screen w-56 flex-col z-40", menuOpen ? "flex" : "hidden md:flex", bg)}>
       <div className={cn("flex items-center gap-2.5 px-5 py-5 border-b", divider)}>
         <div className="w-7 h-7 rounded-lg bg-moss flex items-center justify-center flex-shrink-0">
           <Leaf className="w-4 h-4 text-white" />

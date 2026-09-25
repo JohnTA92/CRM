@@ -1,3 +1,4 @@
+import { EmployeeTools } from "@/components/EmployeeTools";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
@@ -181,6 +182,7 @@ export function CrewPage() {
 
   return (
     <div className="p-8 max-w-4xl">
+      <EmployeeTools />
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-[22px] font-semibold text-ink flex items-center gap-2">
@@ -407,7 +409,7 @@ export function CrewPage() {
                       <button
                         onClick={() => copyPortalLink(m)}
                         className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-paper-warm text-ink-quiet transition-colors text-[11px] font-medium"
-                        title="Copy portal link"
+                        title="Copy staff preview link"
                       >
                         <Link2 className="w-3.5 h-3.5" />
                         {copiedId === m.id ? "Copied!" : "Portal"}

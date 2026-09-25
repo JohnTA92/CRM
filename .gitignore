@@ -28,3 +28,4 @@ tempo/.tempo/
 tempo/node_modules/
 tempo/dist/
 .tempo/
+supabase/.temp/

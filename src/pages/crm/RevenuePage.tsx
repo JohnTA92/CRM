@@ -1,3 +1,4 @@
+import { sumMoney } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -23,6 +24,8 @@ function trendPct(curr: number, prev: number): number | null {
 
 export function RevenuePage() {
   const [loading, setLoading] = useState(true);
+  const [payments, setPayments] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
@@ -31,16 +34,20 @@ export function RevenuePage() {
   const { business } = useAuth();
   const businessId = business?.id ?? "";
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { if (businessId) load(); }, [businessId]);
 
   async function load() {
-    setLoading(true);
-    const [invRes, jobRes, expRes, custRes] = await Promise.all([
+    setLoading(true); setLoadError(null);
+    const [invRes, jobRes, expRes, custRes, pmtRes] = await Promise.all([
       supabase.from("invoices").select("*").eq("business_id", businessId),
-      supabase.from("jobs").select("id, title, customer_id, status, service_type, price, created_at").eq("business_id", businessId),
+      supabase.from("jobs").select("id, title, customer_id, status, service_type, price, scheduled_date, created_at").eq("business_id", businessId),
       supabase.from("expenses").select("*").eq("business_id", businessId),
       supabase.from("customers").select("id, name").eq("business_id", businessId),
+      supabase.from("invoice_payments").select("*").eq("business_id", businessId),
     ]);
+    const error = [invRes, jobRes, expRes, custRes, pmtRes].find((r) => r.error)?.error;
+    if (error) { setLoadError(error.message); setLoading(false); return; }
+    setPayments(pmtRes.data ?? []);
     if (invRes.data) setInvoices(invRes.data);
     if (jobRes.data) setJobs(jobRes.data);
     if (expRes.data) setExpenses(expRes.data);
@@ -51,14 +58,12 @@ export function RevenuePage() {
   const custMap: Record<string, string> = {};
   customers.forEach((c) => { custMap[c.id] = c.name; });
 
-  const paidInvoices = invoices.filter((i) => i.status === "paid");
+  const invoiceMap = new Map(invoices.map((i) => [i.id, i]));
 
   // ── Monthly revenue for selected year ──
   const monthlyData = MONTHS_SHORT.map((label, mi) => {
     const monthStr = `${year}-${String(mi + 1).padStart(2, "0")}`;
-    const rev = paidInvoices
-      .filter((i) => (i.paid_at ?? i.created_at)?.startsWith(monthStr))
-      .reduce((s: number, i: any) => s + (i.total ?? 0), 0);
+    const rev = sumMoney(payments.filter((p) => p.paid_at?.startsWith(monthStr)), (p) => p.amount);
     const exp = expenses
       .filter((e) => (e.date ?? "").startsWith(monthStr))
       .reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
@@ -66,23 +71,20 @@ export function RevenuePage() {
   });
 
   // ── Year totals ──
-  const yearRevenue = monthlyData.reduce((s, m) => s + m.revenue, 0);
-  const yearExpenses = monthlyData.reduce((s, m) => s + m.expenses, 0);
+  const yearRevenue = sumMoney(monthlyData, (m) => m.revenue);
+  const yearExpenses = sumMoney(monthlyData, (m) => m.expenses);
   const yearProfit = yearRevenue - yearExpenses;
 
   // ── Prior year comparison ──
   const prevYear = year - 1;
-  const prevYearRevenue = paidInvoices
-    .filter((i) => (i.paid_at ?? i.created_at)?.startsWith(String(prevYear)))
-    .reduce((s: number, i: any) => s + (i.total ?? 0), 0);
+  const prevYearRevenue = sumMoney(payments.filter((p) => p.paid_at?.startsWith(String(prevYear))), (p) => p.amount);
   const revTrend = trendPct(yearRevenue, prevYearRevenue);
 
   // ── Top customers by revenue ──
   const custRevenue: Record<string, number> = {};
-  paidInvoices.forEach((inv) => {
-    if (inv.customer_id) {
-      custRevenue[inv.customer_id] = (custRevenue[inv.customer_id] ?? 0) + (inv.total ?? 0);
-    }
+  payments.filter((p) => p.paid_at?.startsWith(String(year))).forEach((p) => {
+    const customerId = invoiceMap.get(p.invoice_id)?.customer_id;
+    if (customerId) custRevenue[customerId] = ((Math.round((custRevenue[customerId] ?? 0) * 100)) + Math.round(Number(p.amount) * 100)) / 100;
   });
   const topCustomers = Object.entries(custRevenue)
     .sort(([, a], [, b]) => b - a)
@@ -92,7 +94,7 @@ export function RevenuePage() {
   // ── Monthly job count ──
   const monthlyJobs = MONTHS_SHORT.map((label, mi) => {
     const monthStr = `${year}-${String(mi + 1).padStart(2, "0")}`;
-    const count = jobs.filter((j) => ["complete","invoiced"].includes(j.status) && (j.scheduled_date ?? j.created_at)?.startsWith(monthStr)).length;
+    const count = jobs.filter((j) => j.created_at?.startsWith(monthStr)).length;
     return { label, count };
   });
 
@@ -104,9 +106,11 @@ export function RevenuePage() {
   });
 
   const availableYears = Array.from(
-    new Set(paidInvoices.map((i) => (i.paid_at ?? i.created_at)?.slice(0, 4)).filter(Boolean))
+    new Set([...payments.map((p) => p.paid_at?.slice(0, 4)), ...expenses.map((e) => e.date?.slice(0, 4))].filter(Boolean))
   ).sort().reverse() as string[];
   if (!availableYears.includes(String(year))) availableYears.unshift(String(year));
+
+  if (loadError) return <div className="p-8"><h1 className="text-xl font-semibold">Revenue</h1><p role="alert">Could not load financial data: {loadError}</p><button onClick={load}>Retry</button></div>;
 
   return (
     <div className="p-8 max-w-5xl">
@@ -116,7 +120,7 @@ export function RevenuePage() {
             <TrendingUp className="w-5 h-5 text-ink-quiet" /> Revenue
             {loading && <Loader2 className="w-4 h-4 animate-spin text-ink-quiet" />}
           </h1>
-          <p className="text-[14px] text-ink-quiet mt-1">Track income, expenses, and profit over time</p>
+          <p className="text-[14px] text-ink-quiet mt-1">Payments received, expenses, and net cash flow by payment date</p>
         </div>
         <div className="flex items-center gap-2">
           {availableYears.map((y) => (
@@ -144,7 +148,7 @@ export function RevenuePage() {
           },
           { label: "Total Expenses", value: fmt$full(yearExpenses), sub: `${expenses.filter((e) => (e.date ?? "").startsWith(String(year))).length} entries`, icon: Receipt, color: "bg-[#ffebee]", trend: null },
           {
-            label: "Gross Profit", value: fmt$full(yearProfit),
+            label: "Net Cash Flow", value: fmt$full(yearProfit),
             sub: yearRevenue > 0 ? `${Math.round((yearProfit / yearRevenue) * 100)}% margin` : "—",
             icon: TrendingUp, color: yearProfit >= 0 ? "bg-[#e3f2fd]" : "bg-[#ffebee]", trend: null,
           },

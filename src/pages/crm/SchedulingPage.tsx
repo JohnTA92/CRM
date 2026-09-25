@@ -1,3 +1,4 @@
+import { schedulingConflicts } from "@/lib/scheduling";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -39,6 +40,7 @@ export function SchedulingPage() {
   const [crew, setCrew] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
   const [customers, setCustomers] = useState<Record<string, any>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const today = new Date();
@@ -46,7 +48,7 @@ export function SchedulingPage() {
   const [view, setView] = useState<"week" | "day">("week");
   const [dayDate, setDayDate] = useState(today);
 
-  useEffect(() => { load(); }, [businessId]);
+  useEffect(() => { if (businessId) load(); }, [businessId]);
 
   async function load() {
     setLoading(true);
@@ -56,10 +58,13 @@ export function SchedulingPage() {
         .select("id, title, status, scheduled_date, scheduled_time, duration_minutes, customer_id, crew_member_ids, service_type")
         .eq("business_id", businessId)
         .not("scheduled_date", "is", null)
-        .in("status", ["scheduled", "in-progress", "complete", "quoted"])
+        .in("status", ["scheduled", "in-progress", "complete", "quoted", "invoiced"])
         .order("scheduled_date"),
       supabase.from("customers").select("id, name, address, city").eq("business_id", businessId),
     ]);
+    const error = crewRes.error || jobRes.error || custRes.error;
+    setLoadError(error?.message ?? null);
+    if (error) { setLoading(false); return; }
     if (crewRes.data) setCrew(crewRes.data);
     if (jobRes.data) setJobs(jobRes.data);
     if (custRes.data) {
@@ -88,6 +93,8 @@ export function SchedulingPage() {
     );
   }
 
+  const conflicts = schedulingConflicts(jobs).filter(([a,b]) => view === "day" ? [a.scheduled_date,b.scheduled_date].includes(toISO(dayDate)) : [a.scheduled_date,b.scheduled_date].some(d=>days.some(day=>toISO(day)===d)));
+
   // ── Week view ──
   function WeekView() {
     const weekLabel = `${days[0].toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${days[6].toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
@@ -97,7 +104,7 @@ export function SchedulingPage() {
           <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="p-2 rounded-lg hover:bg-paper-dark border border-paper-deep transition-colors">
             <ChevronLeft className="w-4 h-4 text-ink-soft" />
           </button>
-          <span className="text-[14px] font-semibold text-ink min-w-56 text-center">{weekLabel}</span>
+          <span className="text-[14px] font-semibold text-ink min-w-0 sm:min-w-56 text-center">{weekLabel}</span>
           <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="p-2 rounded-lg hover:bg-paper-dark border border-paper-deep transition-colors">
             <ChevronRight className="w-4 h-4 text-ink-soft" />
           </button>
@@ -186,7 +193,7 @@ export function SchedulingPage() {
           <button onClick={() => setDayDate(addDays(dayDate, -1))} className="p-2 rounded-lg hover:bg-paper-dark border border-paper-deep transition-colors">
             <ChevronLeft className="w-4 h-4 text-ink-soft" />
           </button>
-          <span className={`text-[14px] font-semibold min-w-56 text-center ${isToday ? "text-accent" : "text-ink"}`}>{label}</span>
+          <span className={`text-[14px] font-semibold min-w-0 sm:min-w-56 text-center ${isToday ? "text-accent" : "text-ink"}`}>{label}</span>
           <button onClick={() => setDayDate(addDays(dayDate, 1))} className="p-2 rounded-lg hover:bg-paper-dark border border-paper-deep transition-colors">
             <ChevronRight className="w-4 h-4 text-ink-soft" />
           </button>
@@ -283,8 +290,8 @@ export function SchedulingPage() {
   }
 
   return (
-    <div className="p-8 max-w-6xl">
-      <div className="flex items-center justify-between mb-7">
+    <div className="p-3 sm:p-8 max-w-6xl">
+      <div className="flex flex-wrap gap-3 items-center justify-between mb-7">
         <div>
           <h1 className="text-[22px] font-semibold text-ink flex items-center gap-2">
             <Users className="w-5 h-5 text-ink-quiet" /> Crew Scheduling
@@ -301,7 +308,10 @@ export function SchedulingPage() {
         </div>
       </div>
 
-      {view === "week" ? <WeekView /> : <DayView />}
+      {loadError && <p role="alert" className="text-red-700">{loadError} <button onClick={load}>Retry</button></p>}
+      <p className="text-xs text-ink-quiet mb-3">Overlap checks use assigned crew, start time and duration. Visits without a time cannot be checked.</p>
+      {conflicts.length > 0 && <div role="alert" className="p-3 mb-4 border border-orange-300 rounded"><strong>Crew schedule conflicts</strong>{conflicts.map(([a,b])=><p key={`${a.id}-${b.id}`}><Link className="underline" to={`/jobs/${a.id}`}>{a.title}</Link> overlaps <Link className="underline" to={`/jobs/${b.id}`}>{b.title}</Link> on {a.scheduled_date}. Review crew, time or duration.</p>)}</div>}
+      <div className="overflow-x-auto">{view === "week" ? <div className="min-w-[900px]"><WeekView /></div> : <DayView />}</div>
     </div>
   );
 }

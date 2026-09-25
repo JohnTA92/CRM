@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { EmployeePage } from "@/pages/portal/EmployeePage";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { ThemeProvider } from "@/lib/theme";
 import { AuthProvider, useAuth } from "@/lib/auth";
@@ -67,7 +70,7 @@ function AppLayout() {
   return (
     <div className="flex min-h-screen bg-paper-warm">
       <Sidebar />
-      <main className="ml-56 flex-1 min-w-0">
+      <main className="md:ml-56 pt-14 md:pt-0 flex-1 min-w-0">
         <AnnouncementBanner />
         <Routes>
           <Route path="/" element={<DashboardPage />} />
@@ -99,7 +102,11 @@ function AppLayout() {
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
 function OnboardingOrApp() {
-  const { business } = useAuth();
+  const { business, user } = useAuth();
+  const [employee, setEmployee] = useState<boolean | null>(null);
+  useEffect(() => { let current=true; setEmployee(null); if (!business && user) supabase.rpc('employee_context').then(({data})=>{if(current)setEmployee(!!data);}); else setEmployee(false); return()=>{current=false;}; },[business?.id,user?.id]);
+  if (!business && user && employee===null) return <p className="p-6">Loading your workspace…</p>;
+  if (!business && employee) return <Navigate to="/employee" replace />;
   if (!DEV_MODE && !business?.onboarding_complete) return <OnboardingWizard />;
   return (
     <SubscriptionGate>
@@ -129,9 +136,11 @@ export default function App() {
               </RequireAuth>
             } />
 
+            <Route path="/employee-preview" element={<RequireAuth allowDevBypass={false}><EmployeePage preview /></RequireAuth>} />
+            <Route path="/employee" element={<EmployeePage />} />
             {/* Public portal routes — no auth required */}
             <Route path="/portal/:customerId" element={<CustomerPortalPage />} />
-            <Route path="/crew-portal/:crewId" element={<CrewPortalPage />} />
+            <Route path="/crew-portal/:crewId" element={<RequireAuth allowDevBypass={false}><CrewPortalPage /></RequireAuth>} />
 
             {/* Auth routes — redirect to dashboard if already signed in */}
             <Route path="/login" element={<LoginPage />} />

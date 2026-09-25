@@ -267,7 +267,7 @@ function IconSwatch({
   value: string;
   surface?: string;
   note?: string;
-  icon?: React.ComponentType<{ size?: number; strokeWidth?: number; color?: string }>;
+  icon?: import("lucide-react").LucideIcon;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

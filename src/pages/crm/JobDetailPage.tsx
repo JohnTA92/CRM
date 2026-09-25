@@ -1,3 +1,4 @@
+import { PrivateImage, newFilePath } from "@/lib/privateStorage";
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { MediaModal } from "./MediaModal";
@@ -37,6 +38,7 @@ const JOB_STATUSES = [
   { value: "in-progress", label: "In Progress" },
   { value: "complete", label: "Complete" },
   { value: "invoiced", label: "Invoiced" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 interface Customer { id: string; name: string; }
@@ -59,6 +61,7 @@ export function JobDetailPage() {
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const [notFound, setNotFound] = useState(false);
+  const [conversionError, setConversionError] = useState<string | null>(null);
   const [convertingInvoice, setConvertingInvoice] = useState(false);
 
   // delete confirm
@@ -73,6 +76,8 @@ export function JobDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [statusSaving, setStatusSaving] = useState(false);
   // crew
   const [allCrew, setAllCrew] = useState<{id:string; name:string; role:string}[]>([]);
   const [crewIds, setCrewIds] = useState<string[]>([]);
@@ -85,9 +90,10 @@ export function JobDetailPage() {
   const [checklistSaving, setChecklistSaving] = useState(false);
 
   async function saveCrew(ids: string[]) {
-    setCrewSaving(true);
-    await supabase.from("jobs").update({ crew_member_ids: ids }).eq("id", job.id);
-    setCrewIds(ids);
+    if (crewSaving) return;
+    setCrewSaving(true); setActionError(null);
+    const { error } = await supabase.from("jobs").update({ crew_member_ids: ids }).eq("id", job.id).select().single();
+    if (error) setActionError(error.message); else setCrewIds(ids);
     setCrewSaving(false);
   }
 
@@ -100,29 +106,30 @@ export function JobDetailPage() {
   }
 
   async function saveChecklist(updated: { id: string; text: string; done: boolean }[]) {
-    setChecklistSaving(true);
-    await supabase.from("jobs").update({ checklist: updated }).eq("id", job?.id ?? "");
+    if (checklistSaving) return false;
+    setChecklistSaving(true); setActionError(null);
+    const { error } = await supabase.from("jobs").update({ checklist: updated }).eq("id", job?.id ?? "").select().single();
+    if (error) setActionError(error.message); else setChecklist(updated);
     setChecklistSaving(false);
+    return !error;
   }
 
   async function addChecklistTask() {
-    if (!newTaskText.trim()) return;
+    if (!newTaskText.trim() || checklistSaving) return;
     const item = { id: crypto.randomUUID(), text: newTaskText.trim(), done: false };
     const updated = [...checklist, item];
-    setChecklist(updated);
-    setNewTaskText("");
-    await saveChecklist(updated);
+    if (await saveChecklist(updated)) setNewTaskText("");
   }
 
   async function toggleChecklistItem(itemId: string) {
+    if (checklistSaving) return;
     const updated = checklist.map((i) => i.id === itemId ? { ...i, done: !i.done } : i);
-    setChecklist(updated);
     await saveChecklist(updated);
   }
 
   async function removeChecklistItem(itemId: string) {
+    if (checklistSaving) return;
     const updated = checklist.filter((i) => i.id !== itemId);
-    setChecklist(updated);
     await saveChecklist(updated);
   }
 
@@ -135,14 +142,15 @@ export function JobDetailPage() {
   const [editRecurring, setEditRecurring] = useState("none");
   const [editStatus, setEditStatus] = useState("scheduled");
   const [editNotes, setEditNotes] = useState("");
+  const [editDuration, setEditDuration] = useState("60");
   const [editPrice, setEditPrice] = useState("");
 
   useEffect(() => {
-    if (id) loadJob(id);
-  }, [id]);
+    if (id && businessId) loadJob(id);
+  }, [id, businessId]);
 
   async function loadJob(jobId: string) {
-    setLoading(true);
+    setLoading(true); setNotFound(false);
     const { data, error } = await supabase.from("jobs").select("*").eq("id", jobId).single();
 
     if (error || !data) { setNotFound(true); setLoading(false); return; }
@@ -191,63 +199,20 @@ export function JobDetailPage() {
   }
 
   async function updateStatus(newStatus: string) {
-    if (!job) return;
-    await supabase.from("jobs").update({ status: newStatus }).eq("id", job.id);
-    setJob((prev: any) => ({ ...prev, status: newStatus }));
-
-    // Auto-create next recurring job when marked complete
-    if (newStatus === "complete" && job.recurring && job.recurring !== "none" && job.scheduledDate) {
-      const base = new Date(job.scheduledDate + "T12:00:00");
-      if (job.recurring === "weekly") base.setDate(base.getDate() + 7);
-      else if (job.recurring === "biweekly") base.setDate(base.getDate() + 14);
-      else if (job.recurring === "monthly") base.setMonth(base.getMonth() + 1);
-      const nextDate = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
-      const { error: recurErr } = await supabase.from("jobs").insert({
-        business_id: businessId,
-        customer_id: job.customerId,
-        service_type: job.serviceType,
-        title: job.title,
-        status: "scheduled",
-        scheduled_date: nextDate,
-        scheduled_time: job.scheduledTime ?? null,
-        duration_minutes: job.durationMinutes ?? 60,
-        notes: job.notes || null,
-        price: job.price ?? null,
-        recurring: job.recurring,
-        estimate_id: job.estimateId ?? null,
-        crew_member_ids: [],
-        checklist: [],
-      });
-      if (recurErr) console.error("Failed to create next recurring job:", recurErr.message);
-    }
+    if (!job || statusSaving) return;
+    setStatusSaving(true); setActionError(null);
+    const { error } = await supabase.from("jobs").update({ status: newStatus }).eq("id", job.id).eq("business_id", businessId).select().single();
+    setStatusSaving(false);
+    if (error) { setActionError(error.message); return; }
+    await loadJob(job.id);
   }
 
   async function handleConvertToInvoice() {
-    setConvertingInvoice(true);
-    const lineItems = estimate?.line_items ?? [];
-    const total = estimate?.total ?? 0;
-
-    const { data, error } = await supabase
-      .from("invoices")
-      .insert({
-        business_id: businessId,
-        customer_id: job.customerId,
-        job_id: job.id,
-        estimate_id: estimate?.id ?? null,
-        status: "draft",
-        line_items: lineItems,
-        total,
-        notes: estimate?.notes ?? null,
-      })
-      .select()
-      .single();
-
-    if (error || !data) { setConvertingInvoice(false); return; }
-
-    await supabase.from("jobs").update({ invoice_id: data.id, status: "invoiced" }).eq("id", job.id);
-    setInvoice(data);
-    setJob((prev: any) => ({ ...prev, invoiceId: data.id, status: "invoiced" }));
+    if (convertingInvoice || !job) return;
+    setConvertingInvoice(true); setConversionError(null);
+    const { data, error } = await supabase.rpc("convert_job_to_invoice", { _job_id: job.id }).single<{ id: string }>();
     setConvertingInvoice(false);
+    if (error || !data) { setConversionError(error?.message ?? "Could not create the invoice. Please retry."); return; }
     navigate(`/invoices/${data.id}`);
   }
 
@@ -258,34 +223,33 @@ export function JobDetailPage() {
     setMediaError(null);
 
     for (const file of files) {
-      const ext = file.name.split(".").pop();
-      const path = `${job.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const path = newFilePath(businessId, job.id, file);
 
       const { error: storageErr } = await supabase.storage
         .from("job-media")
         .upload(path, file, { contentType: file.type });
 
       if (storageErr) {
-        setMediaError(`Storage error: ${storageErr.message} — make sure the "job-media" bucket exists in Supabase Storage and is set to Public.`);
+        setMediaError(`Storage error: ${storageErr.message} — please retry or contact your administrator.`);
         setMediaUploading(false);
         e.target.value = "";
         return;
       }
 
-      const { data: urlData } = supabase.storage.from("job-media").getPublicUrl(path);
 
       const { error: dbErr } = await supabase.from("job_media").insert({
         business_id: businessId,
         job_id: job.id,
         customer_id: job.customerId,
         tag,
-        url: urlData.publicUrl,
+        url: path,
         file_name: file.name,
         file_type: file.type,
         notes: null,
       });
 
       if (dbErr) {
+        await supabase.storage.from("job-media").remove([path]);
         setMediaError(`Database error: ${dbErr.message} — make sure the "job_media" table exists in Supabase.`);
         setMediaUploading(false);
         e.target.value = "";
@@ -310,6 +274,7 @@ export function JobDetailPage() {
   function openEdit() {
     setEditCustomerId(job.customerId);
     setEditTitle(job.title);
+    setEditDuration(String(job.durationMinutes));
     setEditServiceType(job.serviceType);
     setEditScheduledDate(job.scheduledDate ?? "");
     setEditScheduledTime(job.scheduledTime ?? "");
@@ -328,10 +293,12 @@ export function JobDetailPage() {
   }
 
   async function handleSave() {
+    if (saving) return;
     const errs: Record<string, string> = {};
     if (!editCustomerId) errs.customerId = "Required";
     if (!editTitle.trim()) errs.title = "Required";
-    if (Object.keys(errs).length) { setEditErrors(errs); return; }
+    if (!Number.isInteger(Number(editDuration)) || Number(editDuration)<1 || Number(editDuration)>1440) errs.duration = "Duration must be 1–1440 whole minutes.";
+    if (Object.keys(errs).length) { setEditErrors(errs); setSaveError(Object.values(errs).join(" ")); return; }
 
     setSaving(true);
     setSaveError(null);
@@ -345,6 +312,7 @@ export function JobDetailPage() {
         scheduled_date: editScheduledDate || null,
         scheduled_time: editScheduledTime || null,
         recurring: editRecurring,
+        duration_minutes: Number(editDuration),
         status: editStatus,
         notes: editNotes.trim() || null,
         price: editPrice ? parseFloat(editPrice) : null,
@@ -415,7 +383,8 @@ export function JobDetailPage() {
   const currentStep = STATUS_STEPS.indexOf(job.status);
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-4 sm:p-8 max-w-3xl">
+      {actionError && <p role="alert" className="mb-4 text-red-700">{actionError}</p>}
       <Link to="/jobs" className="inline-flex items-center gap-1.5 text-[13px] text-ink-quiet hover:text-ink mb-6 transition-colors">
         <ArrowLeft className="w-3.5 h-3.5" /> Jobs
       </Link>
@@ -562,7 +531,7 @@ export function JobDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 mb-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
         {/* Customer */}
         <div className="bg-white rounded-xl border border-paper-deep p-5">
           <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-3">Customer</p>
@@ -616,7 +585,7 @@ export function JobDetailPage() {
       </div>
 
       {/* Estimate & Invoice */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-paper-deep p-5">
           <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-3 flex items-center gap-1.5">
             <FileText className="w-3.5 h-3.5" /> Estimate
@@ -634,7 +603,7 @@ export function JobDetailPage() {
           ) : (
             <div>
               <p className="text-[13px] text-ink-quiet mb-2">No estimate yet</p>
-              <Button size="sm" variant="secondary" className="w-auto text-[12px] h-8" onClick={() => navigate("/estimates", { state: { prefillCustomerId: job.customerId } })}>Create estimate</Button>
+              <Button size="sm" variant="secondary" className="w-auto text-[12px] h-8" onClick={() => navigate("/estimates", { state: { prefillCustomerId: job.customerId, prefillJobId: job.id } })}>Create estimate</Button>
             </div>
           )}
         </div>
@@ -656,6 +625,7 @@ export function JobDetailPage() {
           ) : (
             <div>
               <p className="text-[13px] text-ink-quiet mb-3">No invoice yet</p>
+              {conversionError && <p role="alert" className="mb-2 text-red-700 text-sm">{conversionError}</p>}
               <Button
                 size="sm"
                 className="w-auto text-[12px] h-8 gap-1.5"
@@ -669,7 +639,7 @@ export function JobDetailPage() {
                 <p className="text-[11px] text-ink-quiet mt-1.5">Copies estimate line items automatically</p>
               )}
               {!estimate && (
-                <p className="text-[11px] text-ink-quiet mt-1.5">Create an estimate first to auto-fill line items</p>
+                <p className="text-[11px] text-ink-quiet mt-1.5">Uses the job price. Set a price before creating the invoice.</p>
               )}
             </div>
           )}
@@ -683,6 +653,7 @@ export function JobDetailPage() {
             <Users className="w-3.5 h-3.5" /> Crew Assigned
             {crewIds.length > 0 && <span className="font-normal ml-1">{crewIds.length}</span>}
           </p>
+          <Link to="/scheduling" className="text-sm underline">Review crew schedule</Link>
           {crewSaving && <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-quiet" />}
         </div>
         <div className="px-5 py-4">
@@ -829,7 +800,7 @@ export function JobDetailPage() {
                     <div key={m.id} className="w-8 h-8 rounded-lg overflow-hidden border-2 border-white flex-shrink-0" style={{ zIndex: 3 - i }}>
                       {m.file_type?.startsWith("video/")
                         ? <div className="w-full h-full bg-paper-dark flex items-center justify-center"><Play className="w-3 h-3 text-ink-quiet" /></div>
-                        : <img src={m.url} alt="" className="w-full h-full object-cover" />}
+                        : <PrivateImage src={m.url} alt="" className="w-full h-full object-cover" />}
                     </div>
                   ))}
                 </div>
@@ -892,12 +863,12 @@ export function JobDetailPage() {
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">
         {job.status === "scheduled" && (
-          <Button size="sm" className="w-auto gap-1.5" onClick={() => updateStatus("in-progress")}>
+          <Button size="sm" className="w-auto gap-1.5" disabled={statusSaving} onClick={() => updateStatus("in-progress")}>
             Start Job
           </Button>
         )}
         {job.status === "in-progress" && (
-          <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" onClick={() => updateStatus("complete")}>
+          <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" disabled={statusSaving} onClick={() => updateStatus("complete")}>
             <CheckCircle2 className="w-4 h-4" /> Mark Complete
           </Button>
         )}
@@ -1027,6 +998,7 @@ export function JobDetailPage() {
                 </div>
               </div>
 
+              <label className="block text-sm">Duration (minutes)<input aria-label="Duration (minutes)" type="number" min="1" max="1440" value={editDuration} onChange={e=>setEditDuration(e.target.value)} className="block w-full border rounded p-2" /></label>
               {/* Recurring */}
               <div>
                 <label className="block text-[12px] font-semibold text-ink-quiet mb-1.5">

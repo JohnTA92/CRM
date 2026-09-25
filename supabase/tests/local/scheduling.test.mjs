@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {schedulingConflicts,isClosedJob} from '../../../src/lib/scheduling.ts';
+const a={id:'a',status:'scheduled',scheduled_date:'2026-10-01',scheduled_time:'23:30',duration_minutes:90,crew_member_ids:['crew']};
+const b={...a,id:'b',scheduled_date:'2026-10-02',scheduled_time:'00:30'};
+assert.equal(schedulingConflicts([a,b]).length,1);
+assert.equal(schedulingConflicts([a,{...b,scheduled_time:'01:00'}]).length,0);
+assert.equal(schedulingConflicts([a,{...b,crew_member_ids:['other']}]).length,0);
+assert.equal(schedulingConflicts([a,{...b,status:'cancelled'}]).length,0);
+assert.equal(schedulingConflicts([a,{...b,scheduled_time:null}]).length,0);
+assert.equal(isClosedJob('complete'),true); assert.equal(isClosedJob('cancelled'),true); assert.equal(isClosedJob('scheduled'),false);
+console.log('PASS: crew overlap, midnight, adjacent visits and portal status grouping.');

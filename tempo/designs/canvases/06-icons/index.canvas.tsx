@@ -72,7 +72,7 @@ export const Cover: TempoStoryboard = {
 
 /* ── Icon cell helper ────────────────────────────────────────────── */
 
-function IconCell({ icon: Icon, name, size }: { icon: React.ComponentType<{ size?: number; strokeWidth?: number }>; name: string; size: number }) {
+function IconCell({ icon: Icon, name, size }: { icon: import("lucide-react").LucideIcon; name: string; size: number }) {
   return (
     <div
       style={{

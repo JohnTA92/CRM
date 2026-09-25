@@ -1,5 +1,6 @@
+import { normalizeLineItems, previewTotal, lineAmount } from "@/lib/money";
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
@@ -16,6 +17,10 @@ function estStatusBadge(s: string): "warning" | "success" | "error" | "muted" | 
 }
 
 export function EstimateDetailPage() {
+  const navigate = useNavigate();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [converting, setConverting] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
   const { id } = useParams<{ id: string }>();
   const [estimate, setEstimate] = useState<any>(null);
   const [customer, setCustomer] = useState<any>(null);
@@ -35,7 +40,7 @@ export function EstimateDetailPage() {
   const { business } = useAuth();
   const businessId = business?.id ?? "";
 
-  useEffect(() => { if (id) load(id); }, [id]);
+  useEffect(() => { if (id && businessId) load(id); }, [id, businessId]);
 
   async function load(estId: string) {
     setLoading(true);
@@ -53,8 +58,13 @@ export function EstimateDetailPage() {
   async function updateStatus(status: string) {
     const updates: any = { status };
     if (status === "sent") updates.sent_at = new Date().toISOString();
-    const { data } = await supabase.from("estimates").update(updates).eq("id", estimate.id).select().single();
+    if (statusSaving) return false;
+    setStatusSaving(true); setActionError(null);
+    const { data, error } = await supabase.from("estimates").update(updates).eq("id", estimate.id).select().single();
+    setStatusSaving(false);
+    if (error) { setActionError(error.message); return false; }
     if (data) setEstimate(data);
+    return true;
   }
 
   function openEdit() {
@@ -64,8 +74,7 @@ export function EstimateDetailPage() {
   }
 
   function updateItem(idx: number, field: string, value: string) {
-    const stringFields = ["description", "type"];
-    setEditItems((prev) => prev.map((li, i) => i === idx ? { ...li, [field]: stringFields.includes(field) ? value : Number(value) } : li));
+    setEditItems((prev) => prev.map((li, i) => i === idx ? { ...li, [field]: value } : li));
   }
 
   function addItem() {
@@ -77,14 +86,27 @@ export function EstimateDetailPage() {
   }
 
   async function saveEdit() {
+    if (saving) return;
+    setActionError(null);
+    let normalized;
+    try { normalized = normalizeLineItems(editItems); }
+    catch (error) { setActionError(error instanceof Error ? error.message : "Check line items."); return; }
     setSaving(true);
-    const newTotal = editItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
-    const { data } = await supabase.from("estimates")
-      .update({ line_items: editItems, notes: editNotes, total: newTotal })
+    const { data, error } = await supabase.from("estimates")
+      .update({ line_items: normalized.items, notes: editNotes, total: normalized.total })
       .eq("id", estimate.id).select().single();
-    if (data) setEstimate(data);
     setSaving(false);
-    setShowEditModal(false);
+    if (error) { setActionError(error.message); return; }
+    setEstimate(data); setShowEditModal(false);
+  }
+
+  async function convertToJob() {
+    if (converting) return;
+    setConverting(true); setActionError(null);
+    const { data, error } = await supabase.rpc("convert_estimate_to_job", { _estimate_id: estimate.id }).single<{ id: string }>();
+    setConverting(false);
+    if (error || !data) { setActionError(error?.message ?? "Could not create the job."); return; }
+    navigate(`/jobs/${data.id}`);
   }
 
   async function handleSend() {
@@ -105,7 +127,7 @@ export function EstimateDetailPage() {
     const result = await sendEmail({ to: sendTo, subject, html, type: "estimate", recordId: estimate.id });
 
     if (result.success) {
-      await updateStatus("sent");
+      if (!await updateStatus("sent")) { setSending(false); setSendResult({ success: false, message: "Email sent, but the estimate status could not be saved. Refresh before retrying." }); return; }
       setSendResult({ success: true, message: `Estimate sent to ${sendTo}` });
       setTimeout(() => { setShowSendModal(false); setSendResult(null); }, 2000);
     } else {
@@ -130,7 +152,7 @@ export function EstimateDetailPage() {
   );
 
   const lineItems: any[] = estimate.line_items ?? [];
-  const subtotal = lineItems.reduce((s: number, li: any) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0);
+  const subtotal = Number(estimate.total);
 
   return (
     <div className="p-8 max-w-2xl">
@@ -164,7 +186,7 @@ export function EstimateDetailPage() {
               </div>
               <p className="text-[13px] text-ink-soft text-right">{li.quantity}</p>
               <p className="text-[13px] text-ink-soft text-right">${Number(li.unitPrice).toFixed(2)}</p>
-              <p className="text-[13px] font-semibold text-ink text-right">${(li.quantity * li.unitPrice).toFixed(2)}</p>
+              <p className="text-[13px] font-semibold text-ink text-right">${lineAmount(li.quantity, li.unitPrice).toFixed(2)}</p>
             </div>
           ))}
         </div>
@@ -189,10 +211,10 @@ export function EstimateDetailPage() {
         )}
         {estimate.status === "sent" && (
           <>
-            <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" onClick={() => updateStatus("approved")}>
+            <Button size="sm" className="w-auto gap-1.5 bg-moss hover:bg-moss-dark" disabled={statusSaving} onClick={() => updateStatus("approved")}>
               <ThumbsUp className="w-3.5 h-3.5" /> Mark Approved
             </Button>
-            <Button size="sm" variant="secondary" className="w-auto gap-1.5" onClick={() => updateStatus("declined")}>
+            <Button size="sm" variant="secondary" className="w-auto gap-1.5" disabled={statusSaving} onClick={() => updateStatus("declined")}>
               <ThumbsDown className="w-3.5 h-3.5" /> Mark Declined
             </Button>
           </>
@@ -216,6 +238,7 @@ export function EstimateDetailPage() {
             </div>
 
             <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+              {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
               {/* Line items */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -254,7 +277,7 @@ export function EstimateDetailPage() {
                         <div>
                           <label className="block text-[10px] font-semibold text-ink-quiet uppercase tracking-wide mb-1">Qty</label>
                           <input
-                            type="number" min="1" value={li.quantity}
+                            type="number" min="0.001" step="0.001" value={li.quantity}
                             onChange={(e) => updateItem(idx, "quantity", e.target.value)}
                             className="w-full px-2 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30"
                           />
@@ -269,7 +292,7 @@ export function EstimateDetailPage() {
                         </div>
                       </div>
                       <p className="text-[12px] text-ink-quiet text-right">
-                        Line total: <span className="font-semibold text-ink">${(li.quantity * li.unitPrice).toFixed(2)}</span>
+                        Line total: <span className="font-semibold text-ink">${lineAmount(li.quantity, li.unitPrice).toFixed(2)}</span>
                       </p>
                     </div>
                   ))}
@@ -278,7 +301,7 @@ export function EstimateDetailPage() {
                   <div className="flex items-center justify-between mt-3 px-1">
                     <p className="text-[13px] font-semibold text-ink">Total</p>
                     <p className="text-[18px] font-bold text-ink">
-                      ${editItems.reduce((s, li) => s + (li.quantity ?? 0) * (li.unitPrice ?? 0), 0).toFixed(2)}
+                      ${previewTotal(editItems).toFixed(2)}
                     </p>
                   </div>
                 )}

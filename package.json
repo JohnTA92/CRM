@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:security": "node supabase/tests/local/run.mjs",
+    "test:finance": "node --experimental-strip-types supabase/tests/local/money.test.mjs && node supabase/tests/local/run.mjs",
+    "test:scheduling": "node --experimental-strip-types supabase/tests/local/scheduling.test.mjs && node supabase/tests/local/run.mjs",
+    "test:employee": "node --experimental-strip-types supabase/tests/local/employee.test.mjs && node supabase/tests/local/run.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.2",
@@ -28,6 +32,7 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/node": "^25.6.0",
     "@types/react": "^18.3.14",

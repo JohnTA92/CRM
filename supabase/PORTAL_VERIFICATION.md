@@ -26,3 +26,29 @@
 - Real onboarding must maintain business_members for future owners/employees, and staff login/business selection currently remains owner-oriented. Current owner test account is verified; ordinary employee UI onboarding is not verified.
 - No public app deployment, real customer messaging, or payment occurred. Portal expansion phases beyond this foundation remain pending.
 - Do not rerun old 0001–0005 drafts or overwrite this tested foundation with the prior plan. Extend the timestamped migration history with new migrations.
+
+## Phase 2 fixes verified — 2026-09-24 (Pacific)
+
+Applied remote migration `20260925030206_portal_requests_and_confirmed_signup_reviewed` to CRM. The three previously unapplied draft migrations have been consolidated into this canonical file; do not reapply the old drafts.
+
+- Created service_requests, portal_messages, job_schedule_requests with tenant-scoped staff permissions and customer-only INSERT/SELECT policies. The private authorization helper checks the caller's current, unexpired grant and matching customer/business without exposing grant rows. Customer status forgery and staff sender impersonation are blocked.
+- Derived business_id from customer on the server; validated job/customer relationships and required reschedule dates; prevented reassigning request ownership.
+- Confirmed signup provisions business, owner membership, and company settings atomically. Unconfirmed signup does not attempt browser writes. User metadata supplies a display name only. Portal-only principals are excluded. Billing/ownership fields cannot be updated by the browser.
+- Added load, mutation, and messaging error displays; retry for staff inbox; duplicate-send guards and per-customer reply drafts. Staff preview is read-only.
+- Fixed the TypeScript errors in the application and Tempo canvases. `npm run build` passes (remaining non-failing large-bundle warning).
+
+### Verification
+
+Both `supabase/tests/portal_access.sql` and `supabase/tests/portal_requests.sql` passed on the connected database with all fixtures rolled back. Coverage includes confirmed/unconfirmed signup, idempotent provisioning, customer inserts/read-back, staff updates/replies, unrelated-business isolation, forged status/sender denial, private grant rows, missing date/foreign job rejection, expiry/revocation, anonymous denial, and protected billing fields.
+
+Browser test with TEST Alex Demo passed: submit service request, send message, submit reschedule request, staff marks request Reviewed, approves reschedule, sends reply; customer refresh shows status and reply. Missing date displays validation. Subsequent cancellation saves and staff can decline. Revoking test access blocks the portal and further writes. Fake service/message/schedule rows remain clearly marked TEST for review; the test invite was revoked. No email/SMS or payment was sent. The actual job date was not changed.
+
+Signup's database provisioning was tested using rolled-back synthetic auth records. Actual email delivery/confirmation was not exercised; this requires a real mailbox test before launch.
+
+### Remaining intentional limits / follow-up
+
+- Schedule approval records a decision only; staff must edit the actual job schedule in Jobs. The inbox states this.
+- Stripe activation and final branding remain deferred.
+- New employee invitation UI is still a separate backlog feature.
+- Security advisor reported no new findings from these changes. Existing intentional `get_portal_data` SECURITY DEFINER endpoint remains explicitly scoped and regression-tested: https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable
+- Existing leaked-password protection setting is disabled; assess/enable before launch: https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection

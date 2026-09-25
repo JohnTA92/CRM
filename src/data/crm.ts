@@ -6,7 +6,8 @@ export type JobStatus =
   | "scheduled"
   | "in-progress"
   | "complete"
-  | "invoiced";
+  | "invoiced"
+  | "cancelled";
 
 export type EstimateStatus = "draft" | "sent" | "approved" | "declined" | "expired";
 export type InvoiceStatus = "draft" | "sent" | "paid" | "overdue" | "voided";
@@ -50,6 +51,7 @@ export interface Estimate {
 }
 
 export interface Invoice {
+  paidTotal?: number;
   id: string;
   jobId: string;
   customerId: string;
@@ -65,6 +67,7 @@ export interface Invoice {
 }
 
 export interface Job {
+  crewMemberIds?: string[];
   id: string;
   customerId: string;
   serviceType: ServiceType;
@@ -128,6 +131,7 @@ export function jobStatusLabel(status: JobStatus): string {
     "in-progress": "In Progress",
     complete: "Complete",
     invoiced: "Invoiced",
+    cancelled: "Cancelled",
   };
   return labels[status];
 }

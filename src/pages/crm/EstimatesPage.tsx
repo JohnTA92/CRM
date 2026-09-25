@@ -1,3 +1,4 @@
+import { normalizeLineItems, previewTotal, balanceDue, sumMoney } from "@/lib/money";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
@@ -89,11 +90,13 @@ export function EstimatesPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<EstimateStatus | "all">("all");
   const [showModal, setShowModal] = useState(false);
 
   // form state
+  const [sourceJobId, setSourceJobId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState("");
   const [serviceType, setServiceType] = useState("lawn");
   const [tier, setTier] = useState<"none" | "good" | "better" | "best">("none");
@@ -104,15 +107,16 @@ export function EstimatesPage() {
   ]);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { if (businessId) loadData(); }, [businessId]);
 
   useEffect(() => {
     const prefill = (location.state as any)?.prefillCustomerId;
-    if (prefill) { setCustomerId(prefill); setShowModal(true); window.history.replaceState({}, ""); }
+    if (prefill) { setSourceJobId((location.state as any)?.prefillJobId ?? null); setCustomerId(prefill); setShowModal(true); window.history.replaceState({}, ""); }
   }, [location.state]);
 
   async function loadData() {
     setLoading(true);
+    setLoadError(null);
     // Only filter by business_id for a real, authenticated tenant — an empty string
     // is not a valid uuid, so filtering on it with no session errored these queries
     // out silently (empty estimate list, empty customer dropdown).
@@ -123,6 +127,8 @@ export function EstimatesPage() {
       custQ = custQ.eq("business_id", businessId);
     }
     const [estRes, custRes] = await Promise.all([estQ, custQ]);
+    const loadFailure = estRes.error || custRes.error;
+    if (loadFailure) setLoadError(loadFailure.message);
     if (estRes.data) setEstimates(estRes.data.map(rowToEstimate));
     if (custRes.data) setCustomers(custRes.data);
     setLoading(false);
@@ -145,11 +151,7 @@ export function EstimatesPage() {
     };
   }
 
-  const lineTotal = lineItems.reduce((sum, li) => {
-    const qty = parseFloat(li.quantity) || 0;
-    const price = parseFloat(li.unitPrice) || 0;
-    return sum + qty * price;
-  }, 0);
+  const lineTotal = previewTotal(lineItems);
 
   const addLineItem = () =>
     setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "", type: "service" }]);
@@ -163,38 +165,34 @@ export function EstimatesPage() {
   const validate = () => {
     const e: Record<string, string> = {};
     if (!customerId) e.customerId = "Required";
-    lineItems.forEach((li, i) => {
-      if (!li.description.trim()) e[`li_desc_${i}`] = "Required";
-      if (!li.unitPrice || parseFloat(li.unitPrice) <= 0) e[`li_price_${i}`] = "Required";
-    });
+    try { normalizeLineItems(lineItems); }
+    catch (error) { e.items = error instanceof Error ? error.message : "Check line items."; }
     return e;
   };
 
   const handleSubmit = async () => {
+    if (saving || !businessId) return;
     const e = validate();
-    if (Object.keys(e).length) { setErrors(e); return; }
+    if (Object.keys(e).length) { setErrors(e); setSaveError(e.items ?? "Choose a customer and check the form."); return; }
     setSaving(true);
     setSaveError(null);
 
-    const items: LineItem[] = lineItems.map((li, i) => ({
-      id: `li-${Date.now()}-${i}`,
-      description: li.description.trim(),
-      quantity: parseFloat(li.quantity) || 1,
-      unitPrice: parseFloat(li.unitPrice) || 0,
-      type: li.type,
-    }));
+    const { items, total } = normalizeLineItems(lineItems.map((li) => ({ ...li, id: crypto.randomUUID() })));
 
-    const { data, error } = await supabase
+    const { data, error } = sourceJobId ? await supabase.rpc("create_job_estimate", {
+      _job_id: sourceJobId, _items: items, _notes: notes, _service_type: serviceType,
+      _tier: tier === "none" ? null : tier, _follow_up_days: followUpDays,
+    }).single() : await supabase
       .from("estimates")
       .insert({
-        business_id: businessId || null,
+        business_id: businessId,
         customer_id: customerId,
         service_type: serviceType,
         tier: tier === "none" ? null : tier,
         status: "draft",
         line_items: items,
         notes: notes.trim() || null,
-        total: lineTotal,
+        total,
         follow_up_days: followUpDays,
         follow_up_sent_at: null,
         sent_at: null,
@@ -205,14 +203,14 @@ export function EstimatesPage() {
 
     setSaving(false);
     if (error) { setSaveError(error.message); return; }
-    if (data) setEstimates((prev) => [rowToEstimate(data), ...prev]);
+    if (data) setEstimates((prev) => [rowToEstimate(data), ...prev.filter((e) => e.id !== data.id)]);
 
     setShowModal(false);
     resetForm();
   };
 
   const resetForm = () => {
-    setCustomerId(""); setServiceType("lawn"); setTier("none"); setNotes("");
+    setSourceJobId(null); setCustomerId(""); setServiceType("lawn"); setTier("none"); setNotes("");
     setFollowUpDays(3); setErrors({});
     setLineItems([{ description: "", quantity: "1", unitPrice: "", type: "service" }]);
   };
@@ -225,6 +223,7 @@ export function EstimatesPage() {
 
   return (
     <div className="p-8">
+      {loadError && <p role="alert" className="mb-4 text-red-700">Could not load records: {loadError} <button onClick={loadData}>Retry</button></p>}
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-[22px] font-semibold text-ink">Estimates</h1>
@@ -335,6 +334,7 @@ export function EstimatesPage() {
                 <div className="relative">
                   <select
                     value={customerId}
+                  disabled={!!sourceJobId}
                     onChange={(e) => setCustomerId(e.target.value)}
                     className={`w-full px-3 py-2.5 text-[14px] border rounded-lg bg-white appearance-none focus:outline-none transition-colors ${
                       errors.customerId ? "border-accent" : "border-paper-deep focus:border-ink"

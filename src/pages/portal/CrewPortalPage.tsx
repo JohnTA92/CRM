@@ -121,7 +121,7 @@ export function CrewPortalPage() {
     if (!selectedISO) return;
     const todayJobs = jobs.filter((j) => j.scheduled_date === selectedISO);
     todayJobs.forEach(async (job) => {
-      const addr = customerAddresses[job.customer_id];
+      const addr = (job.service_address ?? customerAddresses[job.customer_id]);
       if (!addr || jobCoords[job.id]) return;
       const coords = await geocode(addr);
       if (coords) setJobCoords((prev) => ({ ...prev, [job.id]: coords }));
@@ -138,7 +138,7 @@ export function CrewPortalPage() {
 
       const [jobRes, allEntriesRes, settingsRes, custRes] = await Promise.all([
         supabase.from("jobs")
-          .select("id, title, status, scheduled_date, scheduled_time, service_type, duration_minutes, customer_id, notes")
+          .select("id, title, status, scheduled_date, scheduled_time, service_type, duration_minutes, customer_id, notes, service_address")
           .contains("crew_member_ids", [id])
           .not("scheduled_date", "is", null)
           .order("scheduled_date"),
@@ -669,10 +669,10 @@ export function CrewPortalPage() {
                   </button>
                 )}
                 {(() => {
-                  const addressed = selectedDayJobs.filter((j) => customerAddresses[j.customer_id]);
+                  const addressed = selectedDayJobs.filter((j) => (j.service_address ?? customerAddresses[j.customer_id]));
                   if (addressed.length < 2) return null;
-                  const wps = addressed.slice(0, -1).map((j: any) => encodeURIComponent(customerAddresses[j.customer_id])).join("|");
-                  const dest = encodeURIComponent(customerAddresses[addressed[addressed.length - 1].customer_id]);
+                  const wps = addressed.slice(0, -1).map((j: any) => encodeURIComponent((j.service_address ?? customerAddresses[j.customer_id]))).join("|");
+                  const dest = encodeURIComponent((addressed[addressed.length - 1].service_address ?? customerAddresses[addressed[addressed.length - 1].customer_id]));
                   return (
                     <a href={`https://www.google.com/maps/dir/?api=1&waypoints=${wps}&destination=${dest}`}
                       target="_blank" rel="noopener noreferrer"
@@ -713,7 +713,7 @@ export function CrewPortalPage() {
             ) : (
               <div className="divide-y divide-paper-deep">
                 {selectedDayJobs.map((job: any, i: number) => {
-                  const addr = customerAddresses[job.customer_id];
+                  const addr = (job.service_address ?? customerAddresses[job.customer_id]);
                   const STATUS_NEXT: Record<string, string> = {
                     scheduled: "in-progress",
                     quoted: "in-progress",

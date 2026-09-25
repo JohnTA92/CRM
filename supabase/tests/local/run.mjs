@@ -41,6 +41,11 @@ await db.exec(readFileSync(root+'/supabase/tests/scheduling_integrity.sql','utf8
 await db.exec(`alter table auth.users add column email_confirmed_at timestamptz;`);
 await db.exec(readFileSync(root+'/supabase/migrations/20260925043522_employee_field_foundation.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/tests/employee_access.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/migrations/20260925050149_job_service_properties.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/service_properties.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/scheduling_integrity.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/employee_access.sql','utf8'));
+console.log('PASS: property ownership, address snapshots, recurrence, portal and protected deletion.');
 console.log('PASS: employee invitations, least-privilege jobs, shifts, storage, location sessions and revocation.');
 console.log('PASS: recurring rollover/retry, calendar approvals, cancellation and schedule validation.');
 console.log('PASS: financial totals, conversions, payment retry, partial/full balances, authorization and portal checks.');

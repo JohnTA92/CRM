@@ -1,3 +1,4 @@
+import { JobPropertySelect } from "@/components/JobPropertySelect";
 import { PrivateImage, newFilePath } from "@/lib/privateStorage";
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
@@ -135,6 +136,7 @@ export function JobDetailPage() {
 
   // edit form fields
   const [editCustomerId, setEditCustomerId] = useState("");
+  const [editPropertyId, setEditPropertyId] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editServiceType, setEditServiceType] = useState("lawn");
   const [editScheduledDate, setEditScheduledDate] = useState("");
@@ -159,6 +161,8 @@ export function JobDetailPage() {
     const mapped = {
       id: row.id,
       customerId: row.customer_id,
+      propertyId: row.property_id,
+      serviceAddress: row.service_address,
       serviceType: row.service_type,
       title: row.title,
       status: row.status,
@@ -273,6 +277,7 @@ export function JobDetailPage() {
 
   function openEdit() {
     setEditCustomerId(job.customerId);
+    setEditPropertyId(job.propertyId ?? "");
     setEditTitle(job.title);
     setEditDuration(String(job.durationMinutes));
     setEditServiceType(job.serviceType);
@@ -307,6 +312,8 @@ export function JobDetailPage() {
       .from("jobs")
       .update({
         customer_id: editCustomerId,
+        property_id: editPropertyId || null,
+        service_address: null,
         title: editTitle.trim(),
         service_type: editServiceType,
         scheduled_date: editScheduledDate || null,
@@ -328,6 +335,8 @@ export function JobDetailPage() {
       const updated = {
         id: row.id,
         customerId: row.customer_id,
+      propertyId: row.property_id,
+      serviceAddress: row.service_address,
         serviceType: row.service_type,
         title: row.title,
         status: row.status,
@@ -539,7 +548,7 @@ export function JobDetailPage() {
             <Link to={`/customers/${customer.id}`} className="hover:underline">
               <p className="text-[14px] font-semibold text-ink">{customer.name}</p>
               {customer.phone && <p className="text-[12px] text-ink-quiet mt-0.5">{customer.phone}</p>}
-              {customer.address && <p className="text-[12px] text-ink-quiet">{customer.address}{customer.city ? `, ${customer.city}` : ""}</p>}
+              <p className="text-[12px] text-ink-quiet mt-2">Service address: {job.serviceAddress || "No address saved — edit the customer or choose a property."}</p>
             </Link>
           ) : (
             <p className="text-[13px] text-ink-quiet">No customer assigned</p>
@@ -931,7 +940,7 @@ export function JobDetailPage() {
               <div>
                 <label className="block text-[12px] font-semibold text-ink-quiet mb-1.5">Customer <span className="text-accent">*</span></label>
                 <div className="relative">
-                  <select value={editCustomerId} onChange={(e) => setEditCustomerId(e.target.value)}
+                  <select value={editCustomerId} onChange={(e) => { setEditCustomerId(e.target.value); setEditPropertyId(""); }}
                     className={`w-full px-3 py-2.5 text-[14px] border rounded-lg bg-white appearance-none focus:outline-none transition-colors ${
                       editErrors.customerId ? "border-accent" : "border-paper-deep focus:border-ink"
                     }`}>
@@ -942,6 +951,8 @@ export function JobDetailPage() {
                 </div>
                 {editErrors.customerId && <p className="text-[11px] text-accent mt-1">{editErrors.customerId}</p>}
               </div>
+
+              <JobPropertySelect businessId={businessId} customerId={editCustomerId} value={editPropertyId} onChange={setEditPropertyId} />
 
               {/* Title */}
               <div>

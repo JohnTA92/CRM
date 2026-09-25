@@ -209,7 +209,7 @@ export function RoutePage() {
 
     const { data: jobs, error: jobErr } = await supabase
       .from("jobs")
-      .select("id, title, customer_id, scheduled_time, scheduled_date, status")
+      .select("id, title, customer_id, scheduled_time, scheduled_date, status, service_address")
       .eq("scheduled_date", iso);
 
     if (jobErr) console.error("jobs error:", jobErr);
@@ -234,11 +234,11 @@ export function RoutePage() {
         id: j.id,
         title: j.title ?? "Untitled Job",
         customerName: c.name ?? "Unknown Customer",
-        address: parts.join(", "),
+        address: j.service_address ?? parts.join(", "),
         scheduledTime: j.scheduled_time ?? null,
         lat: null,
         lng: null,
-        geocoding: parts.length > 0 ? "pending" : "failed",
+        geocoding: (j.service_address ?? parts.join(", ")) ? "pending" : "failed",
       };
     });
 

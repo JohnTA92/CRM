@@ -1,3 +1,4 @@
+import { JobPropertySelect } from "@/components/JobPropertySelect";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
@@ -81,6 +82,7 @@ export function JobsPage() {
 
   // form
   const [customerId, setCustomerId] = useState("");
+  const [propertyId, setPropertyId] = useState("");
   const [serviceType, setServiceType] = useState("lawn");
   const [title, setTitle] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
@@ -158,6 +160,7 @@ export function JobsPage() {
       .insert({
         business_id: businessId || null,
         customer_id: customerId,
+        property_id: propertyId || null,
         service_type: serviceType,
         title: title.trim(),
         status: scheduledDate ? "scheduled" : "draft",
@@ -183,7 +186,7 @@ export function JobsPage() {
   };
 
   const resetForm = () => {
-    setCustomerId(""); setServiceType(services[0]?.value ?? ""); setTitle("");
+    setCustomerId(""); setPropertyId(""); setServiceType(services[0]?.value ?? ""); setTitle("");
     setScheduledDate(""); setScheduledTime(""); setRecurring("none");
     setNotes(""); setPrice(""); setErrors({});
   };
@@ -310,7 +313,7 @@ export function JobsPage() {
                 <div className="relative">
                   <select
                     value={customerId}
-                    onChange={(e) => setCustomerId(e.target.value)}
+                    onChange={(e) => { setCustomerId(e.target.value); setPropertyId(""); }}
                     className={`w-full px-3 py-2.5 text-[14px] border rounded-lg bg-white appearance-none focus:outline-none transition-colors ${
                       errors.customerId ? "border-accent" : "border-paper-deep focus:border-ink"
                     }`}
@@ -324,6 +327,8 @@ export function JobsPage() {
                 </div>
                 {errors.customerId && <p className="text-[11px] text-accent mt-1">{errors.customerId}</p>}
               </div>
+
+              <JobPropertySelect businessId={businessId} customerId={customerId} value={propertyId} onChange={setPropertyId} />
 
               <Field label="Job Title" value={title} onChange={setTitle} placeholder="e.g. Weekly Lawn Mow" required error={errors.title} />
 

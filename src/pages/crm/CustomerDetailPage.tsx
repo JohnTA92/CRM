@@ -75,7 +75,7 @@ function PropertyCard({
   onDelete,
 }: {
   prop: Property;
-  onSave: (id: string, data: Omit<Property, "id">) => Promise<void>;
+  onSave: (id: string, data: Omit<Property, "id">) => Promise<boolean>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -86,9 +86,9 @@ function PropertyCard({
 
   async function save() {
     setSaving(true);
-    await onSave(prop.id, form);
+    const saved = await onSave(prop.id, form);
     setSaving(false);
-    setEditing(false);
+    if (saved) setEditing(false);
   }
 
   const fullAddress = [prop.address, prop.city, prop.state, prop.zip].filter(Boolean).join(", ");
@@ -190,6 +190,7 @@ export function CustomerDetailPage() {
   const [estimates, setEstimates] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  const [propertyError, setPropertyError] = useState("");
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
@@ -391,8 +392,8 @@ export function CustomerDetailPage() {
   // Properties CRUD
   async function addProperty() {
     if (!newProp.address.trim() && !newProp.label.trim()) return;
-    setSavingProp(true);
-    const { data } = await supabase.from("customer_properties").insert({
+    setSavingProp(true); setPropertyError("");
+    const { data, error } = await supabase.from("customer_properties").insert({
       business_id: businessId,
       customer_id: id,
       label: newProp.label.trim() || "Property",
@@ -403,13 +404,15 @@ export function CustomerDetailPage() {
       notes: newProp.notes.trim() || null,
     }).select().single();
     setSavingProp(false);
+    if (error) { setPropertyError(error.message); return; }
     if (data) setProperties((prev) => [...prev, rowToProp(data)]);
     setNewProp(EMPTY_PROPERTY);
     setAddingProperty(false);
   }
 
   async function updateProperty(propId: string, form: Omit<Property, "id">) {
-    const { data } = await supabase.from("customer_properties").update({
+    setPropertyError("");
+    const { data, error } = await supabase.from("customer_properties").update({
       label: form.label || "Property",
       address: form.address || null,
       city: form.city || null,
@@ -417,11 +420,15 @@ export function CustomerDetailPage() {
       zip: form.zip || null,
       notes: form.notes || null,
     }).eq("id", propId).select().single();
+    if (error) { setPropertyError(error.message); return false; }
     if (data) setProperties((prev) => prev.map((p) => p.id === propId ? rowToProp(data) : p));
+    return !!data;
   }
 
   async function deleteProperty(propId: string) {
-    await supabase.from("customer_properties").delete().eq("id", propId);
+    setPropertyError("");
+    const { error } = await supabase.from("customer_properties").delete().eq("id", propId);
+    if (error) { setPropertyError(["23503", "23001"].includes(error.code) ? "This property is linked to jobs and cannot be deleted. Keep it to preserve job history." : error.message); return; }
     setProperties((prev) => prev.filter((p) => p.id !== propId));
   }
 
@@ -691,6 +698,7 @@ export function CustomerDetailPage() {
         </div>
 
         <div className="space-y-2">
+          {propertyError && <p role="alert" className="text-sm text-red-700">{propertyError}</p>}
           {properties.map((prop) => (
             <PropertyCard
               key={prop.id}

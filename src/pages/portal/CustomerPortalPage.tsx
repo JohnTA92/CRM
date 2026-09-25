@@ -374,6 +374,7 @@ function CustomerPortalPageContent() {
                         <div className="flex items-center gap-4">
                           <div className="flex-1 min-w-0">
                             <p className="text-[14px] font-medium text-ink">{j.title}</p>
+                            {j.service_address && <p className="text-xs text-ink-quiet">{j.service_address}</p>}
                             {j.scheduled_date && (
                               <p className="text-[12px] text-ink-quiet flex items-center gap-1 mt-0.5">
                                 <Clock className="w-3 h-3" /> {j.scheduled_date}{j.scheduled_time ? ` at ${j.scheduled_time}` : ""}
@@ -439,6 +440,7 @@ function CustomerPortalPageContent() {
                     <div key={j.id} className="flex items-center gap-4 px-5 py-3.5">
                       <div className="flex-1 min-w-0">
                         <p className="text-[14px] font-medium text-ink">{j.title}</p>
+                            {j.service_address && <p className="text-xs text-ink-quiet">{j.service_address}</p>}
                         {j.scheduled_date && (
                           <p className="text-[12px] text-ink-quiet flex items-center gap-1 mt-0.5">
                             <Clock className="w-3 h-3" /> {j.scheduled_date}

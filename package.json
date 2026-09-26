@@ -15,7 +15,8 @@
     "test:documents": "node --experimental-strip-types supabase/tests/local/documents.test.mjs && node supabase/tests/local/run.mjs",
     "test:customers": "node --experimental-strip-types supabase/tests/local/customers.test.mjs && node supabase/tests/local/run.mjs",
     "test:email": "node --experimental-strip-types supabase/tests/local/email.test.mjs",
-    "test:admin": "node --experimental-strip-types supabase/tests/local/admin.test.mjs"
+    "test:admin": "node --experimental-strip-types supabase/tests/local/admin.test.mjs",
+    "test:reporting": "node --experimental-strip-types supabase/tests/local/reporting.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.2",

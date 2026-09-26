@@ -84,6 +84,7 @@ export function InvoicesPage() {
       paidAt: row.paid_at,
       total: row.total ?? 0,
       paidTotal: row.paid_total ?? 0,
+      refundedTotal: row.refunded_total ?? 0,
     };
   }
 
@@ -147,7 +148,7 @@ export function InvoicesPage() {
   const getCustomerName = (id: string) => customers.find((c) => c.id === id)?.name ?? "Unknown";
   const filtered = invoices.filter((i) => statusFilter === "all" || i.status === statusFilter);
   const totalUnpaid = sumMoney(invoices.filter((i) => ["sent", "overdue"].includes(i.status)), balanceDue);
-  const totalPaid = sumMoney(invoices, (i) => i.paidTotal ?? 0);
+  const totalPaid = sumMoney(invoices, (i) => (i.paidTotal ?? 0) - (i.refundedTotal ?? 0));
   const overdue = invoices.filter((i) => i.status === "overdue");
 
   return (
@@ -157,7 +158,7 @@ export function InvoicesPage() {
         <div>
           <h1 className="text-[22px] font-semibold text-ink">Invoices</h1>
           <p className="text-[14px] text-ink-quiet mt-1">
-            {loading ? "Loading…" : `$${totalUnpaid.toLocaleString()} unpaid · $${totalPaid.toLocaleString()} collected`}
+            {loading ? "Loading…" : `$${totalUnpaid.toLocaleString()} unpaid · $${totalPaid.toLocaleString()} net collected`}
           </p>
         </div>
         <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowModal(true)}>

@@ -140,7 +140,7 @@ export function CustomerDocument({ client, kind, id, readOnly = true, onClose, o
         </div>
         <section className="document-totals ml-auto max-w-xs space-y-2 py-5 text-[13px]">
           <p className="flex justify-between font-semibold text-ink"><span>Total</span><span>{money(doc.total)}</span></p>
-          {kind === "invoice" && <><p className="flex justify-between text-ink-soft"><span>Payments recorded</span><span>{money(doc.paid_total)}</span></p><p className="flex justify-between font-semibold text-ink border-t border-paper-deep pt-2"><span>Balance due</span><span>{money(doc.balance_due)}</span></p></>}
+          {kind === "invoice" && <><p className="flex justify-between text-ink-soft"><span>Payments recorded</span><span>{money(doc.paid_total)}</span></p>{Number(doc.refunded_total ?? 0)>0&&<><p className="flex justify-between text-ink-soft"><span>Refunded and credited</span><span>{money(doc.refunded_total)}</span></p><p className="flex justify-between text-ink-soft"><span>Net payments retained</span><span>{money(Number(doc.paid_total)-Number(doc.refunded_total))}</span></p></>}<p className="flex justify-between font-semibold text-ink border-t border-paper-deep pt-2"><span>Balance due</span><span>{money(doc.balance_due)}</span></p></>}
         </section>
         {doc.notes && <section className="mb-5"><h2 className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-2">Notes</h2><p className="whitespace-pre-wrap break-words text-[13px] text-ink-soft">{doc.notes}</p></section>}
         {doc.decision && (

@@ -1,3 +1,4 @@
+import { InvoiceRefunds } from "@/components/InvoiceRefunds";
 import { DocumentButton } from "@/components/CustomerDocument";
 import { normalizeLineItems, previewTotal, lineAmount, moneyCents, balanceDue as invoiceBalance } from "@/lib/money";
 import { useState, useEffect } from "react";
@@ -57,7 +58,7 @@ export function InvoiceDetailPage() {
   useEffect(() => { if (id && businessId) load(id); }, [id, businessId]);
 
   async function load(invId: string) {
-    setLoading(true); setNotFound(false); setActionError(null);
+    setLoading(true); setNotFound(false); setActionError(null); setPayments([]);
     const { data, error } = await supabase.from("invoices").select("*").eq("id", invId).eq("business_id", businessId).single();
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setInvoice(data);
@@ -276,11 +277,14 @@ export function InvoiceDetailPage() {
         )}
       </div>
 
+      <InvoiceRefunds invoice={invoice} payments={payments} onRecorded={() => load(invoice.id)} />
+
       {invoice.status === "paid" && (
         <div className="bg-[#e8f5e9] border border-[#a5d6a7] rounded-xl px-5 py-4 mb-5 flex items-center gap-3">
           <CheckCircle2 className="w-4 h-4 text-[#2e7d32]" />
           <p className="text-[13px] text-[#1b5e20] font-medium">
-            Paid in full{invoice.paid_at ? ` on ${invoice.paid_at.split("T")[0]}` : ""}
+            Original balance settled{invoice.paid_at ? ` on ${invoice.paid_at.split("T")[0]}` : ""}
+            {Number(invoice.refunded_total ?? 0) > 0 ? ` · $${Number(invoice.refunded_total).toFixed(2)} refunded and credited` : ""}
             {totalPaid > 0 ? ` · ${payments.length} payment${payments.length !== 1 ? "s" : ""}` : ""}
           </p>
         </div>

@@ -49,6 +49,9 @@ await db.exec(readFileSync(root+'/supabase/migrations/20260925051727_customer_do
 await db.exec(readFileSync(root+'/supabase/tests/customer_documents.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/migrations/20260926181257_customer_tags.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/tests/customer_tags.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/migrations/20260926210207_labor_overhead_refunds.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/labor_overhead_refunds.sql','utf8'));
+console.log('PASS: labor rate snapshots/overlap checks and audited, bounded, idempotent owner refunds.');
 console.log('PASS: customer tag normalization, bounds and tenant isolation.');
 console.log('PASS: document authorization, customer decisions, expiry, stale revisions, retry and immutable evidence.');
 console.log('PASS: property ownership, address snapshots, recurrence, portal and protected deletion.');

@@ -498,7 +498,7 @@ export function CustomerDetailPage() {
     </div>
   );
 
-  const totalSpend = sumMoney(invoices, (i) => Number(i.paid_total ?? 0));
+  const totalSpend = sumMoney(invoices, (i) => Number(i.paid_total ?? 0) - Number(i.refunded_total ?? 0));
   const serviceTypes: string[] = customer.service_types ?? [];
   const tags: string[] = customer.tags ?? [];
 

@@ -1,3 +1,4 @@
+import { JobCostingPanel } from "@/components/JobCostingPanel";
 import { JobPropertySelect } from "@/components/JobPropertySelect";
 import { PrivateImage, newFilePath } from "@/lib/privateStorage";
 import { useState, useEffect, useRef } from "react";
@@ -54,7 +55,6 @@ export function JobDetailPage() {
   const [customer, setCustomer] = useState<any>(null);
   const [estimate, setEstimate] = useState<any>(null);
   const [invoice, setInvoice] = useState<any>(null);
-  const [jobExpenses, setJobExpenses] = useState<any[]>([]);
   const [jobMedia, setJobMedia] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mediaUploading, setMediaUploading] = useState(false);
@@ -182,11 +182,10 @@ export function JobDetailPage() {
     setChecklist(Array.isArray(row.checklist) ? row.checklist : []);
     setCrewIds(Array.isArray(row.crew_member_ids) ? row.crew_member_ids : []);
 
-    const [custRes, estRes, invRes, expRes, mediaRes, crewRes, timeRes] = await Promise.all([
+    const [custRes, estRes, invRes, mediaRes, crewRes, timeRes] = await Promise.all([
       supabase.from("customers").select("*").eq("id", row.customer_id).single(),
       row.estimate_id ? supabase.from("estimates").select("*").eq("id", row.estimate_id).single() : Promise.resolve({ data: null }),
       row.invoice_id ? supabase.from("invoices").select("*").eq("id", row.invoice_id).single() : Promise.resolve({ data: null }),
-      supabase.from("expenses").select("*").eq("job_id", jobId).eq("business_id", businessId),
       supabase.from("job_media").select("*").eq("job_id", jobId).eq("business_id", businessId).order("created_at", { ascending: true }),
       supabase.from("crew_members").select("id, name, role").eq("active", true).eq("business_id", businessId).order("name"),
       supabase.from("time_entries").select("*").eq("job_id", jobId).eq("business_id", businessId),
@@ -195,7 +194,6 @@ export function JobDetailPage() {
     if (custRes.data) setCustomer(custRes.data);
     if (estRes.data) setEstimate(estRes.data);
     if (invRes.data) setInvoice(invRes.data);
-    if (expRes.data) setJobExpenses(expRes.data);
     if (mediaRes.data) setJobMedia(mediaRes.data);
     if (crewRes.data) setAllCrew(crewRes.data);
     setTimeEntries(timeRes.data ?? []);
@@ -381,14 +379,6 @@ export function JobDetailPage() {
     );
   }
 
-  // ── Profit calculations ──
-  const jobRevenue = invoice?.total ?? estimate?.total ?? 0;
-  const totalJobExpenses = jobExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-  const jobGrossProfit = jobRevenue - totalJobExpenses;
-  const jobMarginPct = jobRevenue > 0 ? Math.round((jobGrossProfit / jobRevenue) * 100) : null;
-  const jobExpensePct = jobRevenue > 0 ? Math.min(100, Math.round((totalJobExpenses / jobRevenue) * 100)) : 0;
-  const showEconomics = jobRevenue > 0 || jobExpenses.length > 0;
-
   const currentStep = STATUS_STEPS.indexOf(job.status);
 
   return (
@@ -443,102 +433,7 @@ export function JobDetailPage() {
         </div>
       </div>
 
-      {/* ── Job Economics (Profit Bar) ── */}
-      {showEconomics && (
-        <div className="bg-white rounded-xl border border-paper-deep mb-5 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 bg-paper-warm border-b border-paper-deep">
-            <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5" /> Job Economics
-            </p>
-            {jobMarginPct !== null && (
-              <span className={`text-[12px] font-bold px-2.5 py-0.5 rounded-full ${
-                jobMarginPct >= 50 ? "bg-[#e8f5e9] text-[#2e7d32]"
-                : jobMarginPct >= 20 ? "bg-[#fff3e0] text-[#e65100]"
-                : "bg-[#ffebee] text-[#c62828]"
-              }`}>
-                {jobMarginPct}% margin
-              </span>
-            )}
-          </div>
-
-          <div className="px-5 py-4">
-            {/* Three columns */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div>
-                <p className="text-[11px] text-ink-quiet mb-0.5 uppercase tracking-wide font-semibold">Revenue</p>
-                <p className="text-[20px] font-bold text-[#2e7d32]">${jobRevenue.toLocaleString()}</p>
-                <p className="text-[11px] text-ink-quiet mt-0.5">
-                  {invoice ? "invoiced" : estimate ? "estimated" : ""}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] text-ink-quiet mb-0.5 uppercase tracking-wide font-semibold">Expenses</p>
-                <p className="text-[20px] font-bold text-[#c62828]">${totalJobExpenses.toLocaleString()}</p>
-                <p className="text-[11px] text-ink-quiet mt-0.5">{jobExpenses.length} entr{jobExpenses.length === 1 ? "y" : "ies"}</p>
-              </div>
-              <div>
-                <p className="text-[11px] text-ink-quiet mb-0.5 uppercase tracking-wide font-semibold">Gross Profit</p>
-                <p className={`text-[20px] font-bold ${jobGrossProfit >= 0 ? "text-[#1565c0]" : "text-[#c62828]"}`}>
-                  {jobGrossProfit < 0 ? "-" : ""}${Math.abs(jobGrossProfit).toLocaleString()}
-                </p>
-                <p className="text-[11px] text-ink-quiet mt-0.5">
-                  {jobMarginPct !== null ? `${jobMarginPct}% margin` : "—"}
-                </p>
-              </div>
-            </div>
-
-            {/* Profit bar */}
-            {jobRevenue > 0 && (
-              <>
-                <div className="w-full h-3 bg-paper-dark rounded-full overflow-hidden flex mb-1.5">
-                  <div
-                    className="h-full bg-[#ef9a9a] rounded-l-full transition-all"
-                    style={{ width: `${jobExpensePct}%` }}
-                  />
-                  {jobGrossProfit > 0 && (
-                    <div
-                      className="h-full bg-[#a5d6a7] transition-all"
-                      style={{ width: `${Math.max(0, 100 - jobExpensePct)}%` }}
-                    />
-                  )}
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1.5 text-[11px] text-ink-quiet">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#ef9a9a] inline-block" />
-                    Expenses ({jobExpensePct}%)
-                  </span>
-                  <span className="flex items-center gap-1.5 text-[11px] text-ink-quiet">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#a5d6a7] inline-block" />
-                    Profit ({jobMarginPct ?? 0}%)
-                  </span>
-                </div>
-              </>
-            )}
-
-            {/* Expense line items */}
-            {jobExpenses.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-paper-deep space-y-1.5">
-                <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-2">Logged Expenses</p>
-                {jobExpenses.map((exp: any) => (
-                  <div key={exp.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[12px] text-ink">{exp.description}</span>
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-paper-warm text-ink-quiet capitalize">{exp.category}</span>
-                    </div>
-                    <span className="text-[12px] font-semibold text-ink">${Number(exp.amount).toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {jobExpenses.length === 0 && (
-              <Link to="/expenses" className="text-[12px] text-accent hover:underline mt-3 inline-flex items-center gap-1">
-                <DollarSign className="w-3 h-3" /> Log an expense for this job
-              </Link>
-            )}
-          </div>
-        </div>
-      )}
+      <JobCostingPanel businessId={businessId} jobId={job.id} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
         {/* Customer */}

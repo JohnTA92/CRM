@@ -33,6 +33,7 @@ export async function createDocumentPdf(doc: any) {
   }, layout: "lightHorizontalLines" });
   const totals = [["Total",money(doc.total)]];
   if (doc.kind === "invoice") totals.push(["Payments recorded",money(doc.paid_total)],["Balance due",money(doc.balance_due)]);
+  if (doc.kind === "invoice" && Number(doc.refunded_total ?? 0)>0) totals.push(["Refunded and credited",money(doc.refunded_total)],["Net payments retained",money(Number(doc.paid_total)-Number(doc.refunded_total))]);
   content.push({ unbreakable: true, columns: [{ text: "", width: "*" },{
     width: 245, table: { widths: ["*",85], body: totals.map(([label,value]) => [{ text: label, bold: true },right(value)]) },layout: "noBorders",
   }], margin: [0,0,0,20] });

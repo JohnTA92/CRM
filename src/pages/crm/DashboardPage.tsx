@@ -1,5 +1,7 @@
+import { cashMovements } from "@/lib/reporting";
+import { loadReportRows } from "@/lib/reportData";
 import { balanceDue, sumMoney } from "@/lib/money";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { supabase } from "@/lib/supabase";
@@ -135,22 +137,27 @@ export function DashboardPage() {
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("");
 
-  useEffect(() => { if (businessId) loadAll(); }, [businessId]);
+  const loadVersion = useRef(0);
+  useEffect(() => { loadAll(); return () => { loadVersion.current++; }; }, [businessId]);
 
   async function loadAll() {
+    const version = ++loadVersion.current;
     setLoading(true); setLoadError(null);
-    const [jobRes, invRes, estRes, custRes, expRes, settingsRes, pmtRes] = await Promise.all([
-      supabase.from("jobs").select("*").eq("business_id", businessId),
-      supabase.from("invoices").select("*").eq("business_id", businessId),
-      supabase.from("estimates").select("*").eq("business_id", businessId),
-      supabase.from("customers").select("id, name, archived").eq("business_id", businessId),
-      supabase.from("expenses").select("*").eq("business_id", businessId),
+    if (!businessId) { setLoading(false); return; }
+    const [jobRes, invRes, estRes, custRes, expRes, settingsRes, pmtRes, refundRes] = await Promise.all([
+      loadReportRows("jobs", "*", businessId),
+      loadReportRows("invoices", "*", businessId),
+      loadReportRows("estimates", "*", businessId),
+      loadReportRows("customers", "id, name, archived", businessId),
+      loadReportRows("expenses", "*", businessId),
       supabase.from("company_settings").select("monthly_goal").eq("id", businessId).maybeSingle(),
-      supabase.from("invoice_payments").select("*").eq("business_id", businessId),
+      loadReportRows("invoice_payments", "*", businessId),
+      loadReportRows("invoice_refunds", "*", businessId),
     ]);
-    const error = [jobRes, invRes, estRes, custRes, expRes, settingsRes, pmtRes].find((r) => r.error)?.error;
+    if (version !== loadVersion.current) return;
+    const error = [jobRes, invRes, estRes, custRes, expRes, settingsRes, pmtRes, refundRes].find((r) => r.error)?.error;
     if (error) { setLoadError(error.message); setLoading(false); return; }
-    setPayments(pmtRes.data ?? []);
+    setPayments(cashMovements(pmtRes.data ?? [], refundRes.data ?? []));
     if (jobRes.data) setJobs(jobRes.data);
     if (invRes.data) setInvoices(invRes.data);
     if (estRes.data) setEstimates(estRes.data);
@@ -189,13 +196,13 @@ export function DashboardPage() {
   const newJobsBooked = jobs.filter((j) => j.created_at?.split("T")[0] >= periodStart).length;
 
   // ── P&L ──
-  const periodExpenses = expenses.filter((e) => (e.date ?? "") >= periodStart);
-  const totalExpenses = periodExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-  const grossProfit = revenue - totalExpenses;
+  const periodExpenses = expenses.filter((e) => (e.date ?? "") >= periodStart && (e.date ?? "") <= today);
+  const totalExpenses = sumMoney(periodExpenses, e => Number(e.amount));
+  const grossProfit = (Math.round(revenue * 100) - Math.round(totalExpenses * 100)) / 100;
   const marginPct = revenue > 0 ? Math.round((grossProfit / revenue) * 100) : 0;
   const expensesByCategory: Record<string, number> = {};
   periodExpenses.forEach((e: any) => {
-    expensesByCategory[e.category] = (expensesByCategory[e.category] ?? 0) + (e.amount ?? 0);
+    expensesByCategory[e.category] = (Math.round((expensesByCategory[e.category] ?? 0) * 100) + Math.round(Number(e.amount) * 100)) / 100;
   });
 
   // ── Pipeline strip ──
@@ -247,7 +254,7 @@ export function DashboardPage() {
     const t = job?.service_type ?? "custom";
     if (!serviceStats[t]) serviceStats[t] = { count: 0, revenue: 0 };
     serviceStats[t].count++;
-    serviceStats[t].revenue += inv.total ?? 0;
+    serviceStats[t].revenue = (Math.round(serviceStats[t].revenue * 100) + Math.round(Number(inv.total ?? 0) * 100) - Math.round(Number(inv.refunded_total ?? 0) * 100)) / 100;
   });
 
   // ── Today / recent ──
@@ -259,7 +266,7 @@ export function DashboardPage() {
 
   // ── Monthly goal (always MTD) ──
   const mtdRevenue = sumMoney(payments.filter((p) => p.paid_at?.startsWith(today.slice(0, 7)) && p.paid_at?.split("T")[0] <= today), (p) => p.amount);
-  const goalPct = monthlyGoal > 0 ? Math.min(100, Math.round((mtdRevenue / monthlyGoal) * 100)) : 0;
+  const goalPct = monthlyGoal > 0 ? Math.max(0, Math.min(100, Math.round((mtdRevenue / monthlyGoal) * 100))) : 0;
   const goalGap = monthlyGoal > 0 ? Math.max(0, monthlyGoal - mtdRevenue) : 0;
 
   async function saveGoal() {
@@ -271,6 +278,8 @@ export function DashboardPage() {
     setEditingGoal(false);
   }
 
+  if (!businessId) return <div className="p-8 text-ink-soft">Select a business to view the dashboard.</div>;
+  if (loading) return <div className="p-8 text-ink-soft" role="status">Loading dashboard…</div>;
   if (loadError) return <div className="p-8"><h1 className="text-xl font-semibold">Dashboard</h1><p role="alert">Could not load financial data: {loadError}</p><button onClick={loadAll}>Retry</button></div>;
 
   return (
@@ -347,7 +356,7 @@ export function DashboardPage() {
 
       {/* ── KPI Cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard label="Revenue Collected" value={fmt$(revenue)} sub={PERIOD_LABELS[period]} icon={DollarSign} accent="bg-[#e8f5e9]" trend={revTrend} />
+        <KpiCard label="Net Payments Collected" value={fmt$(revenue)} sub={PERIOD_LABELS[period]} icon={DollarSign} accent="bg-[#e8f5e9]" trend={revTrend} />
         <KpiCard label="Jobs Completed" value={completedJobs.length} sub={PERIOD_LABELS[period]} icon={Briefcase} accent="bg-[#e3f2fd]" trend={jobsTrend} />
         <KpiCard label="Avg Job Size" value={avgJobSize > 0 ? fmt$(avgJobSize) : "—"} sub="revenue ÷ completed jobs" icon={TrendingUp} accent="bg-[#f3e5f5]" />
         <KpiCard label="New Jobs Booked" value={newJobsBooked} sub={PERIOD_LABELS[period]} icon={Clock} accent="bg-[#fff3e0]" />
@@ -357,11 +366,11 @@ export function DashboardPage() {
       {(() => {
         const allPaidInvoices = invoices.filter((i: any) => i.status === "paid");
         const totalRevenue = sumMoney(payments, (p) => p.amount);
-        const totalExpensesAll = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-        const allGrossProfit = totalRevenue - totalExpensesAll;
+        const totalExpensesAll = sumMoney(expenses, e => Number(e.amount));
+        const allGrossProfit = (Math.round(totalRevenue * 100) - Math.round(totalExpensesAll * 100)) / 100;
         const overallMargin = totalRevenue > 0 ? Math.round((allGrossProfit / totalRevenue) * 100) : null;
         const allPaidCount = allPaidInvoices.length;
-        const allAvgTicket = allPaidCount > 0 ? Math.round(sumMoney(allPaidInvoices, (i) => Number(i.total)) / allPaidCount) : 0;
+        const allAvgTicket = allPaidCount > 0 ? Math.round(sumMoney(allPaidInvoices, (i) => Number(i.total) - Number(i.refunded_total ?? 0)) / allPaidCount) : 0;
         const highestService = Object.entries(serviceStats).sort(([, a], [, b]) => (b.revenue / Math.max(1, b.count)) - (a.revenue / Math.max(1, a.count)))[0];
         return (
           <div className="bg-white rounded-xl border border-paper-deep mb-6 overflow-hidden">
@@ -384,7 +393,7 @@ export function DashboardPage() {
               <div className="px-5 py-4">
                 <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Avg Ticket</p>
                 <p className="text-[24px] font-bold leading-none text-ink">{allAvgTicket > 0 ? fmt$(allAvgTicket) : "—"}</p>
-                <p className="text-[11px] text-ink-quiet mt-1">{allPaidCount} paid jobs</p>
+                <p className="text-[11px] text-ink-quiet mt-1">{allPaidCount} paid invoices</p>
               </div>
               <div className="px-5 py-4">
                 <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Net Cash Flow</p>
@@ -413,7 +422,7 @@ export function DashboardPage() {
       <div className="bg-white rounded-xl border border-paper-deep mb-6 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
           <p className="text-[13px] font-semibold text-ink flex items-center gap-1.5">
-            <Wallet className="w-4 h-4 text-ink-quiet" /> Profit & Loss — {PERIOD_LABELS[period]}
+            <Wallet className="w-4 h-4 text-ink-quiet" /> Cash Flow — {PERIOD_LABELS[period]}
           </p>
           <Link to="/expenses" className="text-[12px] text-accent hover:underline flex items-center gap-0.5">
             Manage expenses <ChevronRight className="w-3 h-3" />
@@ -423,7 +432,7 @@ export function DashboardPage() {
         {/* Top row: Revenue / Expenses / Net Cash Flow */}
         <div className="grid grid-cols-3 divide-x divide-paper-deep border-b border-paper-deep">
           {[
-            { label: "Revenue", value: revenue, color: "text-[#2e7d32]", sub: "payments received" },
+            { label: "Revenue", value: revenue, color: "text-[#2e7d32]", sub: "payments less refunds" },
             { label: "Expenses", value: totalExpenses, color: "text-[#c62828]", sub: `${periodExpenses.length} entries` },
             {
               label: "Net Cash Flow",
@@ -445,7 +454,7 @@ export function DashboardPage() {
         {/* Margin bar */}
         <div className="px-6 py-4 border-b border-paper-deep">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide">Profit Margin</p>
+            <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide">Cash Margin</p>
             <p className={`text-[13px] font-bold ${marginPct >= 0 ? "text-[#2e7d32]" : "text-[#c62828]"}`}>{marginPct}%</p>
           </div>
           <div className="w-full h-3 bg-paper-dark rounded-full overflow-hidden flex">
@@ -460,7 +469,7 @@ export function DashboardPage() {
                   <div
                     className="h-full bg-[#a5d6a7] transition-all"
                     style={{ width: `${Math.max(0, marginPct)}%` }}
-                    title="Profit"
+                    title="Cash contribution"
                   />
                 )}
               </>
@@ -469,7 +478,7 @@ export function DashboardPage() {
           </div>
           <div className="flex items-center gap-4 mt-2">
             <span className="flex items-center gap-1.5 text-[11px] text-ink-quiet"><span className="w-2.5 h-2.5 rounded-full bg-[#ef9a9a] inline-block" />Expenses</span>
-            <span className="flex items-center gap-1.5 text-[11px] text-ink-quiet"><span className="w-2.5 h-2.5 rounded-full bg-[#a5d6a7] inline-block" />Profit</span>
+            <span className="flex items-center gap-1.5 text-[11px] text-ink-quiet"><span className="w-2.5 h-2.5 rounded-full bg-[#a5d6a7] inline-block" />Cash contribution</span>
           </div>
         </div>
 

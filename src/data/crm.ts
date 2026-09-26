@@ -54,6 +54,7 @@ export interface Estimate {
 
 export interface Invoice {
   paidTotal?: number;
+  refundedTotal?: number;
   id: string;
   jobId: string;
   customerId: string;

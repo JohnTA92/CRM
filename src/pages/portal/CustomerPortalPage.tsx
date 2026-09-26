@@ -492,7 +492,7 @@ function CustomerPortalPageContent() {
                     <div key={inv.id} className="flex items-center gap-4 px-5 py-3.5">
                       <div className="flex-1 min-w-0">
                         <p className="text-[14px] font-medium text-ink">${Number(inv.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[12px] text-ink-quiet">Paid: ${Number(inv.paid_total ?? 0).toFixed(2)} · Balance: ${balanceDue(inv).toFixed(2)}</p>
+                        <p className="text-[12px] text-ink-quiet">Payments: ${Number(inv.paid_total ?? 0).toFixed(2)} · Refunded/credited: ${Number(inv.refunded_total ?? 0).toFixed(2)} · Balance: ${balanceDue(inv).toFixed(2)}</p>
                         {inv.due_at && <p className="text-[12px] text-ink-quiet">Due {inv.due_at}</p>}
                         <DocumentButton client={client} kind="invoice" id={inv.id} readOnly={preview} />
                         {inv.notes && <p className="text-[12px] text-ink-quiet mt-0.5">{inv.notes}</p>}

@@ -1,9 +1,10 @@
-import { schedulingConflicts } from "@/lib/scheduling";
+import { schedulingConflicts, type ScheduledJob } from "@/lib/scheduling";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
-import { ChevronLeft, ChevronRight, Users, Briefcase, Clock, MapPin, AlertCircle } from "lucide-react";
+import { JobAssignmentModal, type AssignableJob } from "@/components/JobAssignmentModal";
+import { ChevronLeft, ChevronRight, Users, Briefcase, Clock, MapPin, AlertCircle, UserCog } from "lucide-react";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -47,6 +48,25 @@ export function SchedulingPage() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(today));
   const [view, setView] = useState<"week" | "day">("week");
   const [dayDate, setDayDate] = useState(today);
+  const [assigning, setAssigning] = useState<AssignableJob | null>(null);
+
+  function toAssignable(j: any): AssignableJob {
+    return {
+      id: j.id,
+      title: j.title,
+      status: j.status,
+      scheduled_date: j.scheduled_date,
+      scheduled_time: j.scheduled_time,
+      duration_minutes: j.duration_minutes,
+      crew_member_ids: Array.isArray(j.crew_member_ids) ? j.crew_member_ids : [],
+      customerName: customers[j.customer_id]?.name,
+    };
+  }
+
+  function handleAssignmentSaved(updated: ScheduledJob) {
+    setJobs((prev) => prev.map((j) => (j.id === updated.id ? { ...j, ...updated } : j)));
+    setAssigning(null);
+  }
 
   useEffect(() => { if (businessId) load(); }, [businessId]);
 
@@ -237,8 +257,8 @@ export function SchedulingPage() {
                     {dayJobs.map((j) => {
                       const cust = customers[j.customer_id];
                       return (
-                        <Link key={j.id} to={`/jobs/${j.id}`} className="flex items-center gap-4 px-5 py-3 hover:bg-paper-warm transition-colors">
-                          <div className="flex-1 min-w-0">
+                        <div key={j.id} className="flex items-center gap-4 px-5 py-3 hover:bg-paper-warm transition-colors">
+                          <Link to={`/jobs/${j.id}`} className="flex-1 min-w-0">
                             <p className="text-[13px] font-medium text-ink truncate">{j.title}</p>
                             {cust && (
                               <p className="text-[12px] text-ink-quiet flex items-center gap-1 mt-0.5">
@@ -246,7 +266,7 @@ export function SchedulingPage() {
                                 {cust.name}{cust.address ? ` · ${cust.address}${cust.city ? `, ${cust.city}` : ""}` : ""}
                               </p>
                             )}
-                          </div>
+                          </Link>
                           {j.scheduled_time && (
                             <span className="text-[12px] text-ink-quiet flex items-center gap-1 flex-shrink-0">
                               <Clock className="w-3 h-3" /> {j.scheduled_time}
@@ -255,7 +275,14 @@ export function SchedulingPage() {
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border capitalize flex-shrink-0 ${STATUS_COLOR[j.status] ?? "bg-paper-warm border-paper-deep text-ink-soft"}`}>
                             {j.status.replace("-", " ")}
                           </span>
-                        </Link>
+                          <button
+                            type="button"
+                            onClick={() => setAssigning(toAssignable(j))}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink-soft border border-paper-deep hover:bg-paper-dark transition-colors flex-shrink-0"
+                          >
+                            <UserCog className="w-3 h-3" /> Reassign
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -273,13 +300,19 @@ export function SchedulingPage() {
               </div>
               <div className="divide-y divide-paper-deep">
                 {unassigned.map((j) => (
-                  <Link key={j.id} to={`/jobs/${j.id}`} className="flex items-center gap-4 px-5 py-3 hover:bg-paper-warm transition-colors">
-                    <div className="flex-1 min-w-0">
+                  <div key={j.id} className="flex items-center gap-4 px-5 py-3 hover:bg-paper-warm transition-colors">
+                    <Link to={`/jobs/${j.id}`} className="flex-1 min-w-0">
                       <p className="text-[13px] font-medium text-ink">{j.title}</p>
                       <p className="text-[12px] text-ink-quiet">{customers[j.customer_id]?.name ?? ""}</p>
-                    </div>
-                    <span className="text-[12px] text-[#e65100] font-medium">Assign crew →</span>
-                  </Link>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setAssigning(toAssignable(j))}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold text-[#e65100] border border-[#ffcc80] hover:bg-[#ffe0b2] transition-colors flex-shrink-0"
+                    >
+                      <UserCog className="w-3.5 h-3.5" /> Assign crew
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -312,6 +345,17 @@ export function SchedulingPage() {
       <p className="text-xs text-ink-quiet mb-3">Overlap checks use assigned crew, start time and duration. Visits without a time cannot be checked.</p>
       {conflicts.length > 0 && <div role="alert" className="p-3 mb-4 border border-orange-300 rounded"><strong>Crew schedule conflicts</strong>{conflicts.map(([a,b])=><p key={`${a.id}-${b.id}`}><Link className="underline" to={`/jobs/${a.id}`}>{a.title}</Link> overlaps <Link className="underline" to={`/jobs/${b.id}`}>{b.title}</Link> on {a.scheduled_date}. Review crew, time or duration.</p>)}</div>}
       <div className="overflow-x-auto">{view === "week" ? <div className="min-w-[900px]"><WeekView /></div> : <DayView />}</div>
+
+      {assigning && (
+        <JobAssignmentModal
+          job={assigning}
+          crew={crew}
+          boardJobs={jobs}
+          businessId={businessId}
+          onClose={() => setAssigning(null)}
+          onSaved={handleAssignmentSaved}
+        />
+      )}
     </div>
   );
 }

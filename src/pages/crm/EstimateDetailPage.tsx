@@ -7,7 +7,8 @@ import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { estimateStatusLabel } from "@/data/crm";
-import { buildEstimateEmail, sendEmail } from "@/lib/email";
+import { sendEmail } from "@/lib/email";
+import { EmailHistory } from "@/components/EmailHistory";
 import { ArrowLeft, Send, ThumbsUp, ThumbsDown, Loader2, Mail, X, CheckCircle2, AlertCircle, Plus, Trash2, Pencil } from "lucide-react";
 
 function estStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" {
@@ -111,25 +112,14 @@ export function EstimateDetailPage() {
   }
 
   async function handleSend() {
-    if (!sendTo.trim()) return;
+    if (sending || !sendTo.trim()) return;
     setSending(true);
     setSendResult(null);
 
-    const { subject, html } = buildEstimateEmail({
-      to: sendTo,
-      customerName: customer?.name ?? "Customer",
-      estimateId: estimate.id,
-      lineItems: lineItems,
-      total: subtotal,
-      notes: estimate.notes,
-      createdAt: estimate.created_at?.split("T")[0],
-    });
-
-    const result = await sendEmail({ to: sendTo, subject, html, type: "estimate", recordId: estimate.id });
+    const result = await sendEmail({ type: "estimate", recordId: estimate.id });
 
     if (result.success) {
-      if (!await updateStatus("sent")) { setSending(false); setSendResult({ success: false, message: "Email sent, but the estimate status could not be saved. Refresh before retrying." }); return; }
-      setSendResult({ success: true, message: `Estimate sent to ${sendTo}` });
+      setSendResult({ success: true, message: `Estimate accepted by the email provider for ${sendTo}. Inbox delivery is not yet confirmed.` });
       setTimeout(() => { setShowSendModal(false); setSendResult(null); }, 2000);
     } else {
       setSendResult({ success: false, message: result.error ?? "Failed to send email" });
@@ -370,23 +360,25 @@ export function EstimateDetailPage() {
                 <input
                   type="email"
                   value={sendTo}
-                  onChange={(e) => setSendTo(e.target.value)}
+                  readOnly aria-label="Customer email saved on record"
                   placeholder="customer@email.com"
                   className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
                 />
                 {!customer?.email && (
                   <p className="text-[12px] text-amber-600 mt-1.5 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
-                    No email on file for this customer — enter one above
+                    No email on file. Save an email on the customer record first.
                   </p>
                 )}
               </div>
 
+              <p className="text-[12px] text-ink-quiet">Uses the saved customer email and published document. Email remains unavailable until a verified sender is configured.</p>
+              <EmailHistory kind="estimate" recordId={estimate.id} />
               {/* What gets sent */}
               <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-xl p-4">
                 <p className="text-[12px] font-semibold text-[#15803d] mb-2">What the customer receives</p>
                 <ul className="space-y-1.5">
-                  {["Professional HTML email with all line items", "Itemized pricing and grand total", "Any notes you've added", "Your business name in the sender line"].map((item) => (
+                  {["Professional HTML email with all line items", "Itemized pricing and grand total", "Any notes you've added", "Your business contact email for replies"].map((item) => (
                     <li key={item} className="flex items-center gap-2 text-[12px] text-[#166534]">
                       <CheckCircle2 className="w-3.5 h-3.5 text-[#16a34a] flex-shrink-0" />
                       {item}

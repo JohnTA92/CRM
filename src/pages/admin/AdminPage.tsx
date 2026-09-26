@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
 import { useAuth, useIsSuperAdmin } from "@/lib/auth";
 import { callAdminFunction, type AdminErrorKind } from "@/lib/adminApi";
 import {
@@ -75,11 +74,6 @@ function statusLabel(s: string | null) {
   return s;
 }
 
-async function logAction(action: string, bizId?: string, bizName?: string, details?: string) {
-  await supabase.functions.invoke("admin-log-action", {
-    body: { action, target_business_id: bizId, target_business_name: bizName, details },
-  });
-}
 
 // ─── Business row with expandable controls ───────────────────────────────────
 
@@ -88,18 +82,18 @@ function BusinessRow({ biz, onUpdated }: { biz: Business; onUpdated: (b: Busines
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [trialDate, setTrialDate] = useState(biz.trial_ends_at?.slice(0, 10) ?? "");
-  const [resetEmail, setResetEmail] = useState(biz.owner_email ?? "");
+
 
   const subStatus = biz.subscription_id === "comped" ? "comped" : (biz.subscription_status ?? "none");
   const statusClass = STATUS_COLORS[subStatus] ?? "bg-paper-warm text-ink-quiet border-paper-deep";
 
-  async function act(action: string, extra: object = {}, logDetails?: string) {
+  async function act(action: string, extra: object = {}, _logDetails?: string) {
     setLoading(action);
     setError("");
-    const { data, error: err } = await supabase.functions.invoke("admin-update-business", { body: { action, business_id: biz.id, ...extra } });
+    const { data, errorMessage } = await callAdminFunction<{business: Business}>("admin-update-business", { action, business_id: biz.id, ...extra });
     setLoading(null);
-    if (err || data?.error) { setError(err?.message ?? data?.error); return; }
-    await logAction(action, biz.id, biz.name, logDetails);
+    if (errorMessage) { setError(errorMessage); return; }
+
     if (data?.business) onUpdated(data.business);
   }
 
@@ -178,14 +172,6 @@ function BusinessRow({ biz, onUpdated }: { biz: Business; onUpdated: (b: Busines
             <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-2">Support Tools</p>
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => act("sync_stripe", {}, "synced Stripe status")}
-                disabled={!!loading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-paper-deep bg-white hover:bg-paper-warm disabled:opacity-50 transition-colors text-ink"
-              >
-                {loading === "sync_stripe" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Sync Stripe
-              </button>
-              <button
                 onClick={() => act("reset_onboarding", {}, "reset onboarding")}
                 disabled={!!loading}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-paper-deep bg-white hover:bg-paper-warm disabled:opacity-50 transition-colors text-ink"
@@ -196,26 +182,7 @@ function BusinessRow({ biz, onUpdated }: { biz: Business; onUpdated: (b: Busines
             </div>
           </div>
 
-          {/* Password reset */}
-          <div>
-            <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-2">Send Password Reset</p>
-            <div className="flex gap-2">
-              <input
-                value={resetEmail}
-                onChange={(e) => setResetEmail(e.target.value)}
-                placeholder="owner@email.com"
-                className="flex-1 px-3 py-1.5 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink"
-              />
-              <button
-                onClick={() => act("send_password_reset", { email: resetEmail }, `sent password reset to ${resetEmail}`)}
-                disabled={!!loading || !resetEmail}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors"
-              >
-                {loading === "send_password_reset" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SendHorizonal className="w-3.5 h-3.5" />}
-                Send
-              </button>
-            </div>
-          </div>
+          <p className="text-[12px] text-ink-quiet">Stripe sync and admin password-reset email are not enabled yet.</p>
 
           {/* Metadata */}
           <div className="grid grid-cols-2 gap-2 pt-2 border-t border-paper-deep">
@@ -243,18 +210,17 @@ function SupportRow({ req, onUpdated }: { req: SupportRequest; onUpdated: (r: Su
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState(req.admin_notes ?? "");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   async function update(status?: string) {
     setSaving(true);
-    const { data } = await supabase.functions.invoke("admin-update-support", {
-      body: { request_id: req.id, status: status ?? req.status, admin_notes: notes },
+    setSaveError("");
+    const { data, errorMessage } = await callAdminFunction<{request: SupportRequest}>("admin-update-support", {
+      request_id: req.id, status: status ?? req.status, admin_notes: notes,
     });
     setSaving(false);
-    if (data?.ok) {
-      const newStatus = status ?? req.status;
-      await logAction(`support_${newStatus}`, undefined, req.business_name ?? undefined, `ticket: ${req.message.slice(0, 60)}`);
-      onUpdated({ ...req, status: newStatus, admin_notes: notes });
-    }
+    if (errorMessage) { setSaveError(errorMessage); return; }
+    if (data?.request) onUpdated(data.request);
   }
 
   const isOpen = req.status === "open";
@@ -285,6 +251,7 @@ function SupportRow({ req, onUpdated }: { req: SupportRequest; onUpdated: (r: Su
 
       {expanded && (
         <div className="border-t border-paper-deep px-5 py-4 space-y-3">
+          {saveError && <p role="alert" className="text-[12px] text-red-600">{saveError}</p>}
           <div className="bg-paper-warm rounded-lg px-4 py-3">
             <p className="text-[13px] text-ink whitespace-pre-wrap">{req.message}</p>
           </div>
@@ -378,6 +345,7 @@ export function AdminPage() {
   // Audit log state
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState("");
 
   // Announcements state
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -429,82 +397,66 @@ export function AdminPage() {
 
   const loadTeam = useCallback(async () => {
     if (!isSuperAdmin) return;
-    const { data } = await supabase.functions.invoke("admin-manage-team", { body: { action: "list" } });
+    setTeamLoading(true); setTeamError("");
+    const {data,errorMessage}=await callAdminFunction<{admins: AdminUser[]}>("admin-manage-team",{action:"list"});
+    setTeamLoading(false);
+    if(errorMessage){setTeamError(errorMessage);return;}
     setAdmins(data?.admins ?? []);
-  }, [isSuperAdmin]);
-
+  },[isSuperAdmin]);
   const loadAudit = useCallback(async () => {
-    setAuditLoading(true);
-    const { data } = await supabase.functions.invoke("admin-get-audit-log");
+    setAuditLoading(true); setAuditError("");
+    const {data,errorMessage}=await callAdminFunction<{logs: AuditLog[]}>("admin-get-audit-log");
     setAuditLoading(false);
+    if(errorMessage){setAuditError(errorMessage);return;}
     setAuditLogs(data?.logs ?? []);
-  }, []);
-
+  },[]);
   const loadAnnouncements = useCallback(async () => {
-    setAnnLoading(true);
-    const { data } = await supabase.functions.invoke("admin-announcements", { body: { action: "list" } });
+    setAnnLoading(true); setAnnError("");
+    const {data,errorMessage}=await callAdminFunction<{announcements: Announcement[]}>("admin-announcements",{action:"list"});
     setAnnLoading(false);
+    if(errorMessage){setAnnError(errorMessage);return;}
     setAnnouncements(data?.announcements ?? []);
-  }, []);
-
-  useEffect(() => { if (tab === "team") loadTeam(); }, [tab, loadTeam]);
-  useEffect(() => { if (tab === "audit") loadAudit(); }, [tab, loadAudit]);
-  useEffect(() => { if (tab === "announcements") loadAnnouncements(); }, [tab, loadAnnouncements]);
-
-  async function grantAdmin() {
-    if (!newAdminEmail.trim()) return;
-    setTeamLoading(true);
-    setTeamError("");
-    setTeamSuccess("");
-    const { data, error: err } = await supabase.functions.invoke("admin-manage-team", {
-      body: { action: "grant", email: newAdminEmail.trim() },
-    });
+  },[]);
+  useEffect(()=>{if(tab==="team")loadTeam();},[tab,loadTeam]);
+  useEffect(()=>{if(tab==="audit")loadAudit();},[tab,loadAudit]);
+  useEffect(()=>{if(tab==="announcements")loadAnnouncements();},[tab,loadAnnouncements]);
+  async function grantAdmin(){
+    if(!newAdminEmail.trim()||teamLoading)return;
+    setTeamLoading(true);setTeamError("");setTeamSuccess("");
+    const {data,errorMessage}=await callAdminFunction<{message:string}>("admin-manage-team",{action:"grant",email:newAdminEmail.trim()});
     setTeamLoading(false);
-    if (err || data?.error) { setTeamError(data?.error ?? err?.message); return; }
-    await logAction("grant_admin", undefined, undefined, `granted admin to ${newAdminEmail.trim()}`);
-    setTeamSuccess(data.message);
-    setNewAdminEmail("");
-    loadTeam();
+    if(errorMessage){setTeamError(errorMessage);return;}
+    setTeamSuccess(data?.message??"Access updated.");setNewAdminEmail("");await loadTeam();
   }
-
-  async function revokeAdmin(userId: string, email: string) {
-    setTeamLoading(true);
-    setTeamError("");
-    setTeamSuccess("");
-    const { data, error: err } = await supabase.functions.invoke("admin-manage-team", {
-      body: { action: "revoke", user_id: userId },
-    });
+  async function revokeAdmin(userId:string,_email:string){
+    if(teamLoading)return;
+    setTeamLoading(true);setTeamError("");setTeamSuccess("");
+    const {errorMessage}=await callAdminFunction("admin-manage-team",{action:"revoke",user_id:userId});
     setTeamLoading(false);
-    if (err || data?.error) { setTeamError(data?.error ?? err?.message); return; }
-    await logAction("revoke_admin", undefined, undefined, `revoked admin from ${email}`);
-    loadTeam();
+    if(errorMessage){setTeamError(errorMessage);return;}
+    await loadTeam();
   }
-
-  async function createAnnouncement() {
-    if (!annMessage.trim()) return;
-    setAnnError("");
-    setAnnLoading(true);
-    const { data, error: err } = await supabase.functions.invoke("admin-announcements", {
-      body: { action: "create", message: annMessage, type: annType },
-    });
+  async function createAnnouncement(){
+    if(!annMessage.trim()||annLoading)return;
+    setAnnLoading(true);setAnnError("");
+    const {errorMessage}=await callAdminFunction("admin-announcements",{action:"create",message:annMessage,type:annType});
     setAnnLoading(false);
-    if (err || data?.error) { setAnnError(data?.error ?? err?.message); return; }
-    await logAction("announcement_created", undefined, undefined, annMessage.slice(0, 80));
-    setAnnMessage("");
-    loadAnnouncements();
+    if(errorMessage){setAnnError(errorMessage);return;}
+    setAnnMessage("");await loadAnnouncements();
   }
-
-  async function dismissAnnouncement(id: string) {
-    await supabase.functions.invoke("admin-announcements", { body: { action: "dismiss", id } });
-    await logAction("announcement_dismissed");
-    setAnnouncements((prev) => prev.map((a) => a.id === id ? { ...a, active: false } : a));
+  async function dismissAnnouncement(id:string){
+    if(annLoading)return;
+    setAnnLoading(true);setAnnError("");
+    const {errorMessage}=await callAdminFunction("admin-announcements",{action:"dismiss",id});
+    setAnnLoading(false);
+    if(errorMessage){setAnnError(errorMessage);return;}
+    await loadAnnouncements();
   }
 
   // Revenue metrics
   const active = businesses.filter((b) => b.subscription_status === "active" && b.subscription_id !== "comped");
   const trialing = businesses.filter((b) => b.subscription_status === "trialing");
   const pastDue = businesses.filter((b) => b.subscription_status === "past_due");
-  const mrr = active.length * 49;
   const openRequests = supportRequests.filter((r) => r.status === "open");
   const activeAnnouncement = announcements.find((a) => a.active);
 
@@ -631,7 +583,7 @@ export function AdminPage() {
         {/* Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
           {[
-            { label: "MRR", value: `$${mrr.toLocaleString()}`, sub: `${active.length} active`, color: "text-[#16a34a]" },
+            { label: "Billing Revenue", value: "Not connected", sub: "Requires verified billing data", color: "text-ink-quiet" },
             { label: "Trialing", value: String(trialing.length), sub: "free trials", color: "text-[#1d4ed8]" },
             { label: "Past Due", value: String(pastDue.length), sub: "need follow-up", color: pastDue.length > 0 ? "text-[#dc2626]" : "text-ink-quiet" },
             { label: "Open Tickets", value: String(openRequests.length), sub: "support requests", color: openRequests.length > 0 ? "text-[#d97706]" : "text-ink-quiet" },
@@ -685,9 +637,11 @@ export function AdminPage() {
           </div>
         )}
 
+        {tab === "audit" && auditError && <p role="alert" className="text-red-600 text-sm">{auditError} <button onClick={loadAudit}>Retry</button></p>}
         {/* Revenue tab */}
         {tab === "revenue" && (
           <div className="space-y-4">
+            <p className="text-[13px] text-ink-quiet">Subscription statuses are administrative records. Revenue is unavailable until verified billing is connected; active status does not prove payment.</p>
             <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
               <div className="px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
                 <p className="text-[13px] font-semibold text-ink">All Businesses by Status</p>
@@ -709,7 +663,7 @@ export function AdminPage() {
                         {statusLabel(sub === "comped" ? "comped" : b.subscription_status)}
                       </span>
                       <p className="text-[12px] font-semibold text-ink w-12 text-right flex-shrink-0">
-                        {b.subscription_status === "active" && b.subscription_id !== "comped" ? "$49" : "—"}
+                        —
                       </p>
                     </div>
                   );
@@ -718,7 +672,7 @@ export function AdminPage() {
               {active.length > 0 && (
                 <div className="px-5 py-3 border-t border-paper-deep bg-paper-warm flex items-center justify-between">
                   <p className="text-[12px] font-semibold text-ink-quiet">Monthly Recurring Revenue</p>
-                  <p className="text-[15px] font-bold text-[#16a34a]">${mrr.toLocaleString()}</p>
+                  <p className="text-[15px] font-bold text-[#16a34a]">Not connected</p>
                 </div>
               )}
             </div>
@@ -794,6 +748,7 @@ export function AdminPage() {
                   })}
                 </div>
                 <textarea
+                  maxLength={2000}
                   value={annMessage}
                   onChange={(e) => setAnnMessage(e.target.value)}
                   rows={2}
@@ -838,6 +793,7 @@ export function AdminPage() {
                   <p className="text-[11px] text-ink-quiet mt-1">Published by {activeAnnouncement.created_by_email} · {new Date(activeAnnouncement.created_at).toLocaleDateString()}</p>
                 </div>
                 <button
+                  disabled={annLoading}
                   onClick={() => dismissAnnouncement(activeAnnouncement.id)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-paper-deep bg-white hover:bg-paper-warm transition-colors text-ink flex-shrink-0"
                 >
@@ -852,7 +808,7 @@ export function AdminPage() {
                 <p className="text-[13px] font-semibold text-ink">History</p>
               </div>
               <div className="divide-y divide-paper-deep">
-                {announcements.length === 0 && (
+                {!annLoading && !annError && announcements.length === 0 && (
                   <p className="text-[13px] text-ink-quiet text-center py-6">No announcements yet.</p>
                 )}
                 {announcements.map((a) => (
@@ -894,11 +850,11 @@ export function AdminPage() {
             </div>
 
             <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
-              {auditLoading && auditLogs.length === 0 ? (
+              {auditLoading && !auditError && auditLogs.length === 0 ? (
                 <div className="py-12 flex justify-center">
                   <Loader2 className="w-5 h-5 animate-spin text-ink-quiet" />
                 </div>
-              ) : auditLogs.length === 0 ? (
+              ) : !auditError && auditLogs.length === 0 ? (
                 <p className="text-[13px] text-ink-quiet text-center py-8">No audit log entries yet. Actions you take here will appear here.</p>
               ) : (
                 <div className="divide-y divide-paper-deep">
@@ -977,7 +933,7 @@ export function AdminPage() {
                 <p className="text-[13px] font-semibold text-ink">Current Admins</p>
               </div>
               <div className="divide-y divide-paper-deep">
-                {admins.length === 0 && (
+                {!teamLoading && !teamError && admins.length === 0 && (
                   <p className="text-[13px] text-ink-quiet text-center py-6">No admins found.</p>
                 )}
                 {admins.map((a) => (
@@ -992,7 +948,7 @@ export function AdminPage() {
                         )}
                       </div>
                       <p className="text-[11px] text-ink-quiet mt-0.5">
-                        Added {new Date(a.created_at).toLocaleDateString()}
+                        Account created {new Date(a.created_at).toLocaleDateString()}
                       </p>
                     </div>
                     {!a.is_super_admin && (
@@ -1011,13 +967,7 @@ export function AdminPage() {
           </div>
         )}
 
-        {/* Dev mode instructions */}
-        {DEV_MODE && (
-          <div className="mt-8 border border-dashed border-[#f59e0b] rounded-xl p-5 bg-[#fffbeb]">
-            <p className="text-[12px] font-semibold text-[#92400e] mb-2">To grant yourself admin access, run this in Supabase SQL Editor:</p>
-            <code className="block text-[11px] font-mono bg-white border border-[#fde68a] rounded-lg px-4 py-3 text-[#92400e] whitespace-pre">{`UPDATE auth.users\nSET app_metadata = app_metadata || '{"is_admin": true}'::jsonb\nWHERE email = 'your@email.com';`}</code>
-          </div>
-        )}
+
       </div>
     </div>
   );

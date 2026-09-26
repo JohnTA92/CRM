@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/design-system/primitives/Badge";
 import { Button } from "@/design-system/primitives/Button";
@@ -6,7 +6,11 @@ import { type Customer } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
-import { Search, Plus, ChevronRight, MapPin, Phone, Mail, X, User, Loader2 } from "lucide-react";
+import { matchesCustomerQuery, findDuplicateGroups } from "@/lib/customerMatching";
+import {
+  Search, Plus, ChevronRight, MapPin, Phone, Mail, X, User, Loader2,
+  CopyCheck, ChevronDown, ChevronUp, Tag,
+} from "lucide-react";
 
 interface CustomerMeta {
   totalSpend: number;
@@ -60,6 +64,66 @@ function Field({
         }`}
       />
       {error && <p className="text-[11px] text-accent mt-1">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Non-destructive duplicate review. Surfaces records that look like the same person and
+ * says exactly why, then links out so a person can decide. Nothing here merges, deletes
+ * or archives — resolving a duplicate is a manual edit on the customer record.
+ */
+function DuplicateReview({ groups }: { groups: ReturnType<typeof findDuplicateGroups> }) {
+  const [open, setOpen] = useState(false);
+  const count = groups.length;
+
+  return (
+    <div className="bg-white rounded-xl border border-paper-deep mb-5 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-paper-warm transition-colors text-left"
+      >
+        <CopyCheck className="w-4 h-4 text-ink-quiet flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-semibold text-ink">
+            {count} possible duplicate{count !== 1 ? "s" : ""}
+          </p>
+          <p className="text-[12px] text-ink-quiet">
+            Review and resolve manually — nothing is merged or deleted automatically.
+          </p>
+        </div>
+        {open
+          ? <ChevronUp className="w-4 h-4 text-ink-quiet flex-shrink-0" />
+          : <ChevronDown className="w-4 h-4 text-ink-quiet flex-shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-paper-deep divide-y divide-paper-deep">
+          {groups.map((group) => (
+            <div key={group.key} className="px-5 py-3.5">
+              <Badge variant="warning" className="mb-2">{group.label}</Badge>
+              <div className="space-y-1.5">
+                {group.customers.map((c) => (
+                  <Link
+                    key={c.id}
+                    to={`/customers/${c.id}`}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2 -mx-3 hover:bg-paper-warm transition-colors group"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-ink truncate">{c.name || "Unnamed customer"}</p>
+                      <p className="text-[12px] text-ink-quiet truncate">
+                        {[c.phone, c.email, c.address].filter(Boolean).join(" · ") || "No contact details"}
+                      </p>
+                    </div>
+                    <ChevronRight className="hidden sm:block w-4 h-4 text-ink-quiet opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -146,6 +210,9 @@ export function CustomersPage() {
       state: row.state ?? "",
       zip: row.zip ?? "",
       serviceTypes: row.service_types ?? [],
+      // Reads as undefined until the customer_tags migration is applied; an empty
+      // array keeps the list rendering normally in the meantime.
+      tags: row.tags ?? [],
       notes: row.notes ?? "",
       createdAt: row.created_at?.split("T")[0] ?? "",
       archived: row.archived ?? false,
@@ -215,13 +282,12 @@ export function CustomersPage() {
     setSaveError(null);
   };
 
-  const filtered = customerList.filter(
-    (c) =>
-      query === "" ||
-      c.name.toLowerCase().includes(query.toLowerCase()) ||
-      c.email.toLowerCase().includes(query.toLowerCase()) ||
-      c.address.toLowerCase().includes(query.toLowerCase()),
-  );
+  // Normalization-aware: formatted and unformatted phone numbers both match, name
+  // tokens may be typed in any order, and tags are searchable. See lib/customerMatching.
+  const filtered = customerList.filter((c) => matchesCustomerQuery(c, query));
+
+  // Identification only — never merges, deletes or archives anything.
+  const duplicateGroups = useMemo(() => findDuplicateGroups(customerList), [customerList]);
 
   return (
     <div className="p-8">
@@ -243,11 +309,13 @@ export function CustomersPage() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name, email, or address…"
+            placeholder="Search by name, phone, email, address, or tag…"
             className="w-full pl-9 pr-4 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors"
           />
         </div>
       </div>
+
+      {!loading && duplicateGroups.length > 0 && <DuplicateReview groups={duplicateGroups} />}
 
       <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
         {loading ? (
@@ -275,7 +343,7 @@ export function CustomersPage() {
                 <Link
                   key={customer.id}
                   to={`/customers/${customer.id}`}
-                  className="flex items-center gap-4 px-5 py-4 hover:bg-paper-warm transition-colors group"
+                  className="grid grid-cols-[40px_minmax(0,1fr)] sm:flex items-center gap-4 px-5 py-4 hover:bg-paper-warm transition-colors group"
                 >
                   <div className="w-10 h-10 rounded-full bg-paper-dark flex items-center justify-center text-[13px] font-semibold text-ink-soft flex-shrink-0">
                     {customer.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
@@ -289,7 +357,7 @@ export function CustomersPage() {
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
+                          className="flex min-w-0 break-all items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
                         >
                           <MapPin className="w-3 h-3" /> {customer.address}{customer.city ? `, ${customer.city}` : ""}
                         </a>
@@ -298,7 +366,7 @@ export function CustomersPage() {
                         <a
                           href={`tel:${customer.phone}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
+                          className="flex min-w-0 break-all items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
                         >
                           <Phone className="w-3 h-3" /> {customer.phone}
                         </a>
@@ -307,14 +375,14 @@ export function CustomersPage() {
                         <a
                           href={`mailto:${customer.email}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
+                          className="flex min-w-0 break-all items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors"
                         >
                           <Mail className="w-3 h-3" /> {customer.email}
                         </a>
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+                  <div className="col-span-2 flex flex-wrap sm:flex-col items-start sm:items-end gap-1 sm:flex-shrink-0 sm:min-w-[80px] sm:max-w-[220px]">
                     {meta?.totalSpend ? (
                       <span className="text-[13px] font-semibold text-ink">${meta.totalSpend.toLocaleString()}</span>
                     ) : null}
@@ -327,8 +395,13 @@ export function CustomersPage() {
                     {customer.serviceTypes.map((t) => (
                       <Badge key={t} variant={serviceTypeBadge(t)}>{serviceLabel(t, services)}</Badge>
                     ))}
+                    {customer.tags.map((t) => (
+                      <Badge key={`tag-${t}`} variant="muted" className="gap-1 max-w-full whitespace-normal break-all">
+                        <Tag className="w-2.5 h-2.5" /> {t}
+                      </Badge>
+                    ))}
                   </div>
-                  <ChevronRight className="w-4 h-4 text-ink-quiet opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                  <ChevronRight className="hidden sm:block w-4 h-4 text-ink-quiet opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                 </Link>
               );
             })}

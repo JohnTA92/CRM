@@ -22,6 +22,8 @@ export interface Customer {
   state: string;
   zip: string;
   serviceTypes: ServiceType[];
+  /** Staff-entered labels. Empty until the customer_tags migration is applied. */
+  tags: string[];
   notes: string;
   createdAt: string;
   archived: boolean;

@@ -27,3 +27,10 @@ Applied live migration `20260925041650_scheduling_integrity`.
 Live lifecycle writes were not tested; tests used a disposable local database. Local tests do not simulate concurrent PostgreSQL sessions. Browser crew-conflict fixtures were not added to the live account. Recurrence has no end date/series editor yet; disabling repeats on the next visit stops future generation. Conflict warnings do not include travel time or availability rules. Dedicated field-worker invitations and live payment-save verification remain separate work.
 
 App edits are local in the Tempo project; the database migration is live. No deployment, commit or pull request was created.
+
+
+## September 26 dispatch UI batch
+
+Tempo added shared assignment/rescheduling controls to the calendar and crew board with a pre-save overlap warning. Codex wired the new helper tests into `npm run test:scheduling`. Combined scheduling/customer/email/admin tests and production build passed. Signed-in calendar verification opened the new form for the existing TEST job, changed duration from 60 to 61 minutes, confirmed 61 after reload, then saved the original 60 minutes again. No crew assignments or appointment dates were changed.
+
+Working hours, time off, and travel buffers remain pending. Overlap warnings are advisory, not booking locks. Full multi-crew and mobile interaction coverage remains pending.

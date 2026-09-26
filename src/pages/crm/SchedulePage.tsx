@@ -4,7 +4,9 @@ import { Link } from "react-router-dom";
 import { type Job } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import { supabase } from "@/lib/supabase";
-import { ChevronLeft, ChevronRight, Clock, X, Loader2, MapPin, Navigation } from "lucide-react";
+import { type ScheduledJob } from "@/lib/scheduling";
+import { JobAssignmentModal, type AssignableJob } from "@/components/JobAssignmentModal";
+import { ChevronLeft, ChevronRight, Clock, X, Loader2, MapPin, Navigation, UserCog } from "lucide-react";
 
 const DAY_HEADERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -61,6 +63,33 @@ export function SchedulePage() {
   const [customers, setCustomers] = useState<Record<string, string>>({});
   const [customerAddresses, setCustomerAddresses] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [assigning, setAssigning] = useState<AssignableJob | null>(null);
+
+  function toBoardJob(j: Job): ScheduledJob {
+    return {
+      id: j.id,
+      status: j.status,
+      scheduled_date: j.scheduledDate,
+      scheduled_time: j.scheduledTime,
+      duration_minutes: j.durationMinutes,
+      crew_member_ids: j.crewMemberIds ?? [],
+    };
+  }
+
+  function toAssignable(j: Job): AssignableJob {
+    return { ...toBoardJob(j), title: j.title, customerName: getCustomerName(j.customerId) };
+  }
+
+  function handleAssignmentSaved(updated: ScheduledJob) {
+    setJobs((prev) => prev.map((j) => j.id === updated.id ? {
+      ...j,
+      scheduledDate: updated.scheduled_date,
+      scheduledTime: updated.scheduled_time,
+      durationMinutes: updated.duration_minutes ?? j.durationMinutes,
+      crewMemberIds: updated.crew_member_ids ?? [],
+    } : j));
+    setAssigning(null);
+  }
 
   useEffect(() => {
     if (businessId) loadData();
@@ -308,13 +337,22 @@ export function SchedulePage() {
               </div>
               <div className="divide-y divide-paper-deep">
                 {unassigned.map((job) => (
-                  <Link key={job.id} to={`/jobs/${job.id}`} className="block px-4 py-3 hover:bg-paper-warm transition-colors">
-                    <p className="text-[12px] font-semibold text-ink truncate">{getCustomerName(job.customerId)}</p>
-                    <p className="text-[11px] text-ink-quiet truncate">{job.title}</p>
-                    {job.scheduledDate && (
-                      <p className="text-[11px] text-ink-quiet mt-0.5">{job.scheduledDate}</p>
-                    )}
-                  </Link>
+                  <div key={job.id} className="px-4 py-3 hover:bg-paper-warm transition-colors">
+                    <Link to={`/jobs/${job.id}`} className="block">
+                      <p className="text-[12px] font-semibold text-ink truncate">{getCustomerName(job.customerId)}</p>
+                      <p className="text-[11px] text-ink-quiet truncate">{job.title}</p>
+                      {job.scheduledDate && (
+                        <p className="text-[11px] text-ink-quiet mt-0.5">{job.scheduledDate}</p>
+                      )}
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setAssigning(toAssignable(job))}
+                      className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#e65100] hover:underline"
+                    >
+                      <UserCog className="w-3 h-3" /> Assign crew
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -373,7 +411,18 @@ export function SchedulePage() {
             </div>
           </div>
 
-          {selectedDayJobs.filter(j=>!j.scheduledTime).map(j=><Link key={j.id} to={`/jobs/${j.id}`} className="block px-5 py-3 border-b">Time not set · {j.title}</Link>)}
+          {selectedDayJobs.filter(j=>!j.scheduledTime).map(j=>(
+            <div key={j.id} className="flex items-center justify-between px-5 py-3 border-b border-paper-deep">
+              <Link to={`/jobs/${j.id}`} className="flex-1 min-w-0 truncate">Time not set · {j.title}</Link>
+              <button
+                type="button"
+                onClick={() => setAssigning(toAssignable(j))}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink-soft border border-paper-deep hover:bg-paper-warm transition-colors flex-shrink-0 ml-2"
+              >
+                <UserCog className="w-3 h-3" /> Reschedule
+              </button>
+            </div>
+          ))}
           {/* 24-hour timeline */}
           <div className="overflow-y-auto max-h-[480px]">
             {HOURS.map((hour) => {
@@ -436,6 +485,13 @@ export function SchedulePage() {
                               <Navigation className="w-2.5 h-2.5" /> Directions
                             </a>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => setAssigning(toAssignable(job))}
+                            className="flex items-center gap-0.5 text-[10px] font-semibold opacity-70 hover:opacity-100 transition-opacity"
+                          >
+                            <UserCog className="w-2.5 h-2.5" /> Reschedule
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -445,6 +501,17 @@ export function SchedulePage() {
             })}
           </div>
         </div>
+      )}
+
+      {assigning && (
+        <JobAssignmentModal
+          job={assigning}
+          crew={crew}
+          boardJobs={jobs.map(toBoardJob)}
+          businessId={businessId ?? ""}
+          onClose={() => setAssigning(null)}
+          onSaved={handleAssignmentSaved}
+        />
       )}
     </div>
   );

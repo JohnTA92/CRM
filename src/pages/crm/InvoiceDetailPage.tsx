@@ -7,7 +7,8 @@ import { Button } from "@/design-system/primitives/Button";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { invoiceStatusLabel } from "@/data/crm";
-import { buildInvoiceEmail, sendEmail } from "@/lib/email";
+import { sendEmail } from "@/lib/email";
+import { EmailHistory } from "@/components/EmailHistory";
 import { ArrowLeft, Send, CheckCircle2, CreditCard, Loader2, Mail, X, AlertCircle, Plus, DollarSign, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { createPaymentSession } from "@/lib/stripe";
 
@@ -143,26 +144,14 @@ export function InvoiceDetailPage() {
   }
 
   async function handleSend() {
-    if (!sendTo.trim()) return;
+    if (sending || !sendTo.trim()) return;
     setSending(true);
     setSendResult(null);
 
-    const { subject, html } = buildInvoiceEmail({
-      to: sendTo,
-      customerName: customer?.name ?? "Customer",
-      invoiceId: invoice.id,
-      lineItems: lineItems,
-      total: subtotal,
-      paidTotal: Number(invoice.paid_total ?? 0),
-      dueAt: invoice.due_at,
-      notes: invoice.notes,
-    });
-
-    const result = await sendEmail({ to: sendTo, subject, html, type: "invoice", recordId: invoice.id });
+    const result = await sendEmail({ type: "invoice", recordId: invoice.id });
 
     if (result.success) {
-      if (!await updateStatus("sent")) { setSending(false); setSendResult({ success: false, message: "Email sent, but the invoice status could not be saved. Refresh before retrying." }); return; }
-      setSendResult({ success: true, message: `Invoice sent to ${sendTo}` });
+      setSendResult({ success: true, message: `Invoice accepted by the email provider for ${sendTo}. Inbox delivery is not yet confirmed.` });
       setTimeout(() => { setShowSendModal(false); setSendResult(null); }, 2000);
     } else {
       setSendResult({ success: false, message: result.error ?? "Failed to send email" });
@@ -533,18 +522,20 @@ export function InvoiceDetailPage() {
                 <input
                   type="email"
                   value={sendTo}
-                  onChange={(e) => setSendTo(e.target.value)}
+                  readOnly aria-label="Customer email saved on record"
                   placeholder="customer@email.com"
                   className="w-full px-3 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
                 />
                 {!customer?.email && (
                   <p className="text-[12px] text-amber-600 mt-1.5 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
-                    No email on file for this customer — enter one above
+                    No email on file. Save an email on the customer record first.
                   </p>
                 )}
               </div>
 
+              <p className="text-[12px] text-ink-quiet">Uses the saved customer email and published document. Email remains unavailable until a verified sender is configured.</p>
+              <EmailHistory kind="invoice" recordId={invoice.id} />
               {/* What gets sent */}
               <div className="bg-[#eff6ff] border border-[#bfdbfe] rounded-xl p-4">
                 <p className="text-[12px] font-semibold text-[#1d4ed8] mb-2">What the customer receives</p>

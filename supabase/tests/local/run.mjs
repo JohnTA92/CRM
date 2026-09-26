@@ -47,6 +47,9 @@ await db.exec(readFileSync(root+'/supabase/tests/scheduling_integrity.sql','utf8
 await db.exec(readFileSync(root+'/supabase/tests/employee_access.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/migrations/20260925051727_customer_documents_and_decisions.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/tests/customer_documents.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/migrations/20260926181257_customer_tags.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/customer_tags.sql','utf8'));
+console.log('PASS: customer tag normalization, bounds and tenant isolation.');
 console.log('PASS: document authorization, customer decisions, expiry, stale revisions, retry and immutable evidence.');
 console.log('PASS: property ownership, address snapshots, recurrence, portal and protected deletion.');
 console.log('PASS: employee invitations, least-privilege jobs, shifts, storage, location sessions and revocation.');

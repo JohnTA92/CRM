@@ -11,6 +11,7 @@ import {
   ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt,
   Loader2, Clock, CheckCircle2, AlertCircle, Send, Pencil, X, Link2,
   Home, Building2, Trash2, Check, ExternalLink, ShieldOff, ShieldCheck,
+  Tag as TagIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getPortalUrl } from "@/lib/portalLink";
@@ -205,6 +206,13 @@ export function CustomerDetailPage() {
   // Inline notes state
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
+
+  // Tags. `tagSuggestions` are tags already in use on this business's other customers —
+  // there is no seeded/sample list.
+  const [tagInput, setTagInput] = useState("");
+  const [savingTags, setSavingTags] = useState(false);
+  const [tagsError, setTagsError] = useState<string | null>(null);
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [savingNotes, setSavingNotes] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
 
@@ -320,6 +328,15 @@ export function CustomerDetailPage() {
     if (invRes.data) setInvoices(invRes.data);
     if (propRes.data) setProperties(propRes.data.map(rowToProp));
     setLoading(false);
+
+    // Suggestions are best-effort: before the customer_tags migration this column does
+    // not exist, so a failure here just means no suggestions, never a broken page.
+    const tagRes = await supabase.from("customers").select("tags").eq("business_id", bid);
+    if (!tagRes.error && tagRes.data) {
+      const seen = new Set<string>();
+      for (const row of tagRes.data) for (const tag of (row as any).tags ?? []) seen.add(tag);
+      setTagSuggestions([...seen].sort((a, b) => a.localeCompare(b)));
+    }
   }
 
   function rowToProp(row: any): Property {
@@ -346,6 +363,40 @@ export function CustomerDetailPage() {
   function startEditingNotes() {
     setEditingNotes(true);
     setTimeout(() => notesRef.current?.focus(), 50);
+  }
+
+  // Tags — the server trigger also trims/de-duplicates/sorts, but doing it here too
+  // keeps the pill list immediately correct without waiting for a round trip.
+  async function saveTags(next: string[]) {
+    if (savingTags) return;
+    setSavingTags(true);
+    setTagsError(null);
+    const { data, error } = await supabase
+      .from("customers").update({ tags: next }).eq("id", customer.id).select().single();
+    setSavingTags(false);
+    if (error) {
+      // 42703 = undefined_column: the customer_tags migration has not been applied yet.
+      setTagsError(
+        error.code === "42703"
+          ? "Tags aren't enabled yet — the customer tags migration hasn't been applied."
+          : error.message,
+      );
+      return;
+    }
+    if (data) setCustomer(data);
+    setTagInput("");
+  }
+
+  function addTag(value: string) {
+    const tag = value.trim();
+    if (!tag) return;
+    const current: string[] = customer.tags ?? [];
+    if (current.some((t) => t.toLowerCase() === tag.toLowerCase())) { setTagInput(""); return; }
+    saveTags([...current, tag]);
+  }
+
+  function removeTag(value: string) {
+    saveTags((customer.tags ?? []).filter((t: string) => t !== value));
   }
 
   // Edit modal
@@ -449,6 +500,7 @@ export function CustomerDetailPage() {
 
   const totalSpend = sumMoney(invoices, (i) => Number(i.paid_total ?? 0));
   const serviceTypes: string[] = customer.service_types ?? [];
+  const tags: string[] = customer.tags ?? [];
 
   return (
     <div className="p-8 max-w-4xl">
@@ -458,7 +510,7 @@ export function CustomerDetailPage() {
 
       {/* Customer header card */}
       <div className="bg-white rounded-xl border border-paper-deep p-6 mb-6">
-        <div className="flex items-start gap-4">
+        <div className="grid grid-cols-[56px_minmax(0,1fr)] sm:flex items-start gap-4">
           <div className="w-14 h-14 rounded-full bg-paper-dark flex items-center justify-center text-[18px] font-semibold text-ink-soft flex-shrink-0">
             {customer.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
@@ -468,7 +520,7 @@ export function CustomerDetailPage() {
               {customer.phone && (
                 <a
                   href={`tel:${customer.phone}`}
-                  className="flex items-center gap-1.5 text-[13px] text-ink-quiet hover:text-accent transition-colors"
+                  className="flex min-w-0 break-all items-center gap-1.5 text-[13px] text-ink-quiet hover:text-accent transition-colors"
                 >
                   <Phone className="w-3.5 h-3.5" /> {customer.phone}
                 </a>
@@ -476,7 +528,7 @@ export function CustomerDetailPage() {
               {customer.email && (
                 <a
                   href={`mailto:${customer.email}`}
-                  className="flex items-center gap-1.5 text-[13px] text-ink-quiet hover:text-accent transition-colors"
+                  className="flex min-w-0 break-all items-center gap-1.5 text-[13px] text-ink-quiet hover:text-accent transition-colors"
                 >
                   <Mail className="w-3.5 h-3.5" /> {customer.email}
                 </a>
@@ -486,7 +538,7 @@ export function CustomerDetailPage() {
                   href={mapsUrl(customer.address, customer.city, customer.state, customer.zip)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-[13px] text-ink-quiet hover:text-accent transition-colors"
+                  className="flex min-w-0 break-all items-center gap-1.5 text-[13px] text-ink-quiet hover:text-accent transition-colors"
                 >
                   <MapPin className="w-3.5 h-3.5" />
                   {customer.address}{customer.city ? `, ${customer.city}` : ""}{customer.state ? `, ${customer.state}` : ""} {customer.zip ?? ""}
@@ -501,7 +553,7 @@ export function CustomerDetailPage() {
               </div>
             )}
           </div>
-          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+          <div className="col-span-2 flex sm:flex-col justify-between items-center sm:items-end gap-2 flex-shrink-0">
             <div className="text-right">
               <p className="text-[22px] font-semibold text-ink">${totalSpend.toLocaleString()}</p>
               <p className="text-[12px] text-ink-quiet">total spend</p>
@@ -510,6 +562,53 @@ export function CustomerDetailPage() {
               <Pencil className="w-3.5 h-3.5" /> Edit
             </Button>
           </div>
+        </div>
+
+        {/* Tags */}
+        <div className="mt-4 pt-4 border-t border-paper-deep">
+          <p className="text-[12px] text-ink-quiet font-medium uppercase tracking-wide mb-2">Tags</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {tags.map((t: string) => (
+              <span
+                key={t}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium leading-none bg-paper-warm text-ink"
+              >
+                <TagIcon className="w-2.5 h-2.5 text-ink-quiet" />
+                {t}
+                <button
+                  onClick={() => removeTag(t)}
+                  disabled={savingTags}
+                  aria-label={`Remove tag ${t}`}
+                  className="ml-0.5 text-ink-quiet hover:text-ink disabled:opacity-50 transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            <input
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); addTag(tagInput); }
+                if (e.key === "Backspace" && !tagInput && tags.length) removeTag(tags[tags.length - 1]);
+              }}
+              list="customer-tag-suggestions"
+              maxLength={40}
+              disabled={savingTags}
+              placeholder={tags.length ? "Add another…" : "Add a tag…"}
+              aria-label="Add a tag"
+              className="min-w-[8rem] flex-1 px-2.5 py-1 text-[12px] border border-paper-deep rounded-md bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink disabled:opacity-50 transition-colors"
+            />
+            <datalist id="customer-tag-suggestions">
+              {tagSuggestions.filter((t) => !tags.includes(t)).map((t) => <option key={t} value={t} />)}
+            </datalist>
+            {savingTags && <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-quiet" />}
+          </div>
+          {tagsError && (
+            <p role="alert" className="text-[12px] text-[#dc2626] flex items-center gap-1.5 mt-2">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {tagsError}
+            </p>
+          )}
         </div>
 
         {/* Inline notes */}

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ImgHTMLAttributes, type VideoHTMLAttributes } from "react";
 import { supabase } from "./supabase";
 
-export type FileBucket = "job-media" | "expense-receipts";
+export type FileBucket = "job-media" | "expense-receipts" | "customer-media";
 
 // Persist object paths, never expiring signed URLs. Read old Supabase URLs too.
 export function storagePath(bucket: FileBucket, value: string): string {
@@ -45,8 +45,8 @@ export function PrivateImage({ bucket = "job-media", src = "", alt, ...props }: 
   return <img {...props} src={url} alt={alt} />;
 }
 
-export function PrivateVideo({ src = "", ...props }: VideoHTMLAttributes<HTMLVideoElement>) {
-  const { url, error } = usePrivateFile("job-media", src);
+export function PrivateVideo({ bucket = "job-media", src = "", ...props }: VideoHTMLAttributes<HTMLVideoElement> & { bucket?: FileBucket }) {
+  const { url, error } = usePrivateFile(bucket, src);
   if (!url) return <span role="status" className="text-xs text-ink-quiet">{error ? "Video unavailable" : "Loading video…"}</span>;
   return <video {...props} src={url} />;
 }
@@ -56,4 +56,13 @@ export async function deletePrivateMedia(id: string, path: string) {
   if (fileError) throw fileError;
   const { error } = await supabase.from("job_media").delete().eq("id", id).select("id").single();
   if (error) throw error;
+}
+
+// On-demand signed URL for a click action (download, or opening a PDF in a new
+// tab) — same signing call usePrivateFile already makes internally, exposed
+// generically since not every use is a pre-rendered <img>/<video>.
+export async function getPrivateFileUrl(bucket: FileBucket, path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(storagePath(bucket, path), 3600);
+  if (error || !data) throw error ?? new Error("Could not generate a signed URL for this file.");
+  return data.signedUrl;
 }

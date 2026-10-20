@@ -11,10 +11,13 @@ import {
   ArrowLeft, MapPin, Phone, Mail, Plus, Briefcase, FileText, Receipt,
   Loader2, Clock, CheckCircle2, AlertCircle, Send, Pencil, X, Link2,
   Home, Building2, Trash2, Check, ExternalLink, ShieldOff, ShieldCheck,
-  Tag as TagIcon,
+  Tag as TagIcon, Users, Paperclip, Upload, Download, Eye, Film, FileImage,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getPortalUrl } from "@/lib/portalLink";
+import { addRecentCustomerId } from "@/lib/recentCustomers";
+import { PrivateImage, PrivateVideo, newFilePath, getPrivateFileUrl } from "@/lib/privateStorage";
+import { ATTACHMENT_ALLOWED_TYPES, ATTACHMENT_MAX_BYTES, validateAttachmentFile, formatFileSize } from "@/lib/attachmentValidation";
 
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
   const m: Record<string, "warning" | "success" | "error" | "muted" | "default" | "gold"> = {
@@ -180,11 +183,127 @@ function PropertyCard({
   );
 }
 
+interface AdditionalContact {
+  id: string;
+  role: string;
+  name: string;
+  email: string;
+  phone: string;
+}
+
+const EMPTY_CONTACT = { role: "", name: "", email: "", phone: "" };
+
+interface Attachment {
+  id: string;
+  storage_path: string;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+  created_at: string;
+}
+
+function attachmentKind(fileType: string): "image" | "video" | "pdf" | "file" {
+  if (fileType.startsWith("image/")) return "image";
+  if (fileType.startsWith("video/")) return "video";
+  if (fileType === "application/pdf") return "pdf";
+  return "file";
+}
+
+function attachmentIcon(kind: ReturnType<typeof attachmentKind>) {
+  if (kind === "image") return FileImage;
+  if (kind === "video") return Film;
+  return FileText;
+}
+
+// Mirrors PropertyCard's display/edit shape, with one deliberate difference: no
+// delete control. Editing fields in place is the only correction path for now.
+function ContactCard({
+  contact,
+  onSave,
+}: {
+  contact: AdditionalContact;
+  onSave: (id: string, data: Omit<AdditionalContact, "id">) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ role: contact.role, name: contact.name, email: contact.email, phone: contact.phone });
+  const [saving, setSaving] = useState(false);
+
+  const set = (field: string) => (value: string) => setForm((f) => ({ ...f, [field]: value }));
+
+  async function save() {
+    setSaving(true);
+    const saved = await onSave(contact.id, form);
+    setSaving(false);
+    if (saved) setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="border border-paper-deep rounded-xl p-4 bg-white space-y-3">
+        <Field label="Role" value={form.role} onChange={set("role")} placeholder="Property Manager, Spouse…" />
+        <Field label="Name" value={form.name} onChange={set("name")} placeholder="Jane Smith" />
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Email" value={form.email} onChange={set("email")} placeholder="jane@email.com" type="email" />
+          <Field label="Phone" value={form.phone} onChange={set("phone")} placeholder="555-000-0000" type="tel" />
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            Save
+          </button>
+          <button
+            onClick={() => setEditing(false)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-paper-deep bg-white hover:bg-paper-warm transition-colors text-ink"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-paper-deep rounded-xl px-4 py-3.5 bg-white group">
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-lg bg-paper-warm border border-paper-deep flex items-center justify-center flex-shrink-0">
+          <Users className="w-4 h-4 text-ink-quiet" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[13px] font-semibold text-ink">{contact.name}</p>
+            {contact.role && <Badge variant="muted">{contact.role}</Badge>}
+          </div>
+          {contact.phone && (
+            <a href={`tel:${contact.phone}`} className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors mt-0.5">
+              <Phone className="w-3 h-3" /> {contact.phone}
+            </a>
+          )}
+          {contact.email && (
+            <a href={`mailto:${contact.email}`} className="flex items-center gap-1 text-[12px] text-ink-quiet hover:text-accent transition-colors mt-0.5">
+              <Mail className="w-3 h-3" /> {contact.email}
+            </a>
+          )}
+        </div>
+        <button
+          onClick={() => setEditing(true)}
+          className="p-1.5 rounded-lg hover:bg-paper-warm text-ink-quiet hover:text-ink transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CustomerDetailPage() {
   const { services } = useServices();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const { business, loading: authLoading } = useAuth();
+  const { business, user, loading: authLoading } = useAuth();
   const businessId = business?.id ?? "";
   const [customer, setCustomer] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -192,6 +311,15 @@ export function CustomerDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [propertyError, setPropertyError] = useState("");
+  const [contacts, setContacts] = useState<AdditionalContact[]>([]);
+  const [contactsError, setContactsError] = useState("");
+  const [contactsEnabled, setContactsEnabled] = useState(true);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentsEnabled, setAttachmentsEnabled] = useState(true);
+  const [uploadError, setUploadError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
@@ -226,6 +354,11 @@ export function CustomerDetailPage() {
   const [addingProperty, setAddingProperty] = useState(false);
   const [newProp, setNewProp] = useState(EMPTY_PROPERTY);
   const [savingProp, setSavingProp] = useState(false);
+
+  // Add additional-contact state
+  const [addingContact, setAddingContact] = useState(false);
+  const [newContact, setNewContact] = useState(EMPTY_CONTACT);
+  const [savingContact, setSavingContact] = useState(false);
 
   // Staff preview only — staff's own session already has legitimate access via the
   // business_members RLS policy, so this bare-id link works for staff exactly as
@@ -315,18 +448,36 @@ export function CustomerDetailPage() {
     if (error || !data) { setNotFound(true); setLoading(false); return; }
     setCustomer(data);
     setNotesValue(data.notes ?? "");
+    addRecentCustomerId(custId);
 
     const bid = businessId || data.business_id;
-    const [jobRes, estRes, invRes, propRes] = await Promise.all([
+    const [jobRes, estRes, invRes, propRes, contactRes, attachRes] = await Promise.all([
       supabase.from("jobs").select("*").eq("business_id", bid).eq("customer_id", custId).order("created_at", { ascending: false }),
       supabase.from("estimates").select("*").eq("business_id", bid).eq("customer_id", custId).order("created_at", { ascending: false }),
       supabase.from("invoices").select("*").eq("business_id", bid).eq("customer_id", custId).order("created_at", { ascending: false }),
       supabase.from("customer_properties").select("*").eq("business_id", bid).eq("customer_id", custId).order("created_at", { ascending: true }),
+      supabase.from("customer_contacts").select("*").eq("business_id", bid).eq("customer_id", custId).order("created_at", { ascending: true }),
+      supabase.from("customer_attachments").select("*").eq("business_id", bid).eq("customer_id", custId).order("created_at", { ascending: false }),
     ]);
     if (jobRes.data) setJobs(jobRes.data);
     if (estRes.data) setEstimates(estRes.data);
     if (invRes.data) setInvoices(invRes.data);
     if (propRes.data) setProperties(propRes.data.map(rowToProp));
+    // Unlike the tags column, this is a whole new table: before the
+    // customer_contacts migration is applied, querying it returns a hard
+    // 42P01 (undefined_table) error rather than a soft miss. Degrade honestly
+    // instead of breaking the rest of the page.
+    if (contactRes.error) {
+      setContactsEnabled(contactRes.error.code !== "42P01");
+    } else if (contactRes.data) {
+      setContacts(contactRes.data.map(rowToContact));
+    }
+    // Same honest degradation for the customer_attachments table + customer-media bucket.
+    if (attachRes.error) {
+      setAttachmentsEnabled(attachRes.error.code !== "42P01");
+    } else if (attachRes.data) {
+      setAttachments(attachRes.data);
+    }
     setLoading(false);
 
     // Suggestions are best-effort: before the customer_tags migration this column does
@@ -348,6 +499,16 @@ export function CustomerDetailPage() {
       state: row.state ?? "",
       zip: row.zip ?? "",
       notes: row.notes ?? "",
+    };
+  }
+
+  function rowToContact(row: any): AdditionalContact {
+    return {
+      id: row.id,
+      role: row.role ?? "",
+      name: row.name ?? "",
+      email: row.email ?? "",
+      phone: row.phone ?? "",
     };
   }
 
@@ -481,6 +642,98 @@ export function CustomerDetailPage() {
     const { error } = await supabase.from("customer_properties").delete().eq("id", propId);
     if (error) { setPropertyError(["23503", "23001"].includes(error.code) ? "This property is linked to jobs and cannot be deleted. Keep it to preserve job history." : error.message); return; }
     setProperties((prev) => prev.filter((p) => p.id !== propId));
+  }
+
+  // Additional contacts — add and edit only. There is deliberately no delete here.
+  async function addContact() {
+    if (!newContact.name.trim()) return;
+    setSavingContact(true); setContactsError("");
+    const { data, error } = await supabase.from("customer_contacts").insert({
+      business_id: businessId,
+      customer_id: id,
+      role: newContact.role.trim() || null,
+      name: newContact.name.trim(),
+      email: newContact.email.trim() || null,
+      phone: newContact.phone.trim() || null,
+    }).select().single();
+    setSavingContact(false);
+    if (error) { setContactsError(error.message); return; }
+    if (data) setContacts((prev) => [...prev, rowToContact(data)]);
+    setNewContact(EMPTY_CONTACT);
+    setAddingContact(false);
+  }
+
+  async function updateContact(contactId: string, form: Omit<AdditionalContact, "id">) {
+    setContactsError("");
+    if (!form.name.trim()) { setContactsError("Name is required."); return false; }
+    const { data, error } = await supabase.from("customer_contacts").update({
+      role: form.role.trim() || null,
+      name: form.name.trim(),
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+    }).eq("id", contactId).select().single();
+    if (error) { setContactsError(error.message); return false; }
+    if (data) setContacts((prev) => prev.map((c) => c.id === contactId ? rowToContact(data) : c));
+    return !!data;
+  }
+
+  // Attachments — add only (no delete). Follows the exact upload → insert →
+  // on-insert-failure-remove-the-storage-object sequence already used in
+  // JobDetailPage.tsx's handleQuickMediaUpload, so a failed save never leaves an
+  // orphaned storage object and never shows a nonexistent attachment as successful.
+  async function handleAttachmentSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    if (uploading) return; // belt-and-suspenders against a duplicate submission
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset immediately so re-selecting the same file re-triggers change
+    if (!file || !id) return;
+
+    const validation = validateAttachmentFile(file);
+    if (!validation.ok) { setUploadError(validation.reason); return; }
+
+    setUploading(true);
+    setUploadError("");
+
+    const path = newFilePath(businessId, id, file);
+    const { error: storageErr } = await supabase.storage
+      .from("customer-media")
+      .upload(path, file, { contentType: file.type });
+
+    if (storageErr) {
+      setUploadError(`Storage error: ${storageErr.message} — please retry.`);
+      setUploading(false);
+      return;
+    }
+
+    const { data, error: dbErr } = await supabase.from("customer_attachments").insert({
+      business_id: businessId,
+      customer_id: id,
+      storage_path: path,
+      file_name: file.name,
+      file_type: file.type,
+      file_size: file.size,
+      uploaded_by: user?.id ?? null,
+    }).select().single();
+
+    if (dbErr) {
+      // Technical cleanup of the orphaned storage object — not a user-facing delete.
+      await supabase.storage.from("customer-media").remove([path]);
+      setUploadError(`Database error: ${dbErr.message}`);
+      setUploading(false);
+      return;
+    }
+
+    if (data) setAttachments((prev) => [data as Attachment, ...prev]);
+    setUploading(false);
+  }
+
+  async function downloadAttachment(att: Attachment) {
+    setUploadError("");
+    try {
+      const url = await getPrivateFileUrl("customer-media", att.storage_path);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      setUploadError("Could not generate a download link. Please retry.");
+    }
   }
 
   if (loading) return (
@@ -862,6 +1115,175 @@ export function CustomerDetailPage() {
           )}
         </div>
       </section>
+
+      {/* Additional Contacts — add/edit only, no delete */}
+      <section className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-[15px] font-semibold text-ink flex items-center gap-2">
+            <Users className="w-4 h-4 text-ink-quiet" /> Additional Contacts ({contacts.length})
+          </h2>
+          {contactsEnabled && !addingContact && (
+            <button
+              onClick={() => setAddingContact(true)}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-ink-quiet hover:text-ink transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Contact
+            </button>
+          )}
+        </div>
+
+        {!contactsEnabled ? (
+          <p className="text-[13px] text-ink-quiet px-1">
+            Additional contacts aren't enabled yet — the customer_contacts migration hasn't been applied.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {contactsError && <p role="alert" className="text-sm text-red-700">{contactsError}</p>}
+            {contacts.map((contact) => (
+              <ContactCard key={contact.id} contact={contact} onSave={updateContact} />
+            ))}
+
+            {addingContact && (
+              <div className="border border-paper-deep rounded-xl p-4 bg-white space-y-3">
+                <p className="text-[13px] font-semibold text-ink">New Contact</p>
+                <Field label="Role" value={newContact.role} onChange={(v) => setNewContact((c) => ({ ...c, role: v }))} placeholder="Property Manager, Spouse…" />
+                <Field label="Name" value={newContact.name} onChange={(v) => setNewContact((c) => ({ ...c, name: v }))} placeholder="Jane Smith" />
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Email" value={newContact.email} onChange={(v) => setNewContact((c) => ({ ...c, email: v }))} placeholder="jane@email.com" type="email" />
+                  <Field label="Phone" value={newContact.phone} onChange={(v) => setNewContact((c) => ({ ...c, phone: v }))} placeholder="555-000-0000" type="tel" />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={addContact}
+                    disabled={savingContact || !newContact.name.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors"
+                  >
+                    {savingContact ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    Add Contact
+                  </button>
+                  <button
+                    onClick={() => { setAddingContact(false); setNewContact(EMPTY_CONTACT); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-paper-deep bg-white hover:bg-paper-warm transition-colors text-ink"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {contacts.length === 0 && !addingContact && (
+              <button
+                onClick={() => setAddingContact(true)}
+                className="w-full border border-dashed border-paper-deep rounded-xl px-4 py-5 text-[13px] text-ink-quiet hover:text-ink hover:border-ink-quiet transition-colors flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" /> Add a secondary contact
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Attachments — upload/view/download only, no delete */}
+      <section className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-[15px] font-semibold text-ink flex items-center gap-2">
+            <Paperclip className="w-4 h-4 text-ink-quiet" /> Attachments ({attachments.length})
+          </h2>
+          {attachmentsEnabled && (
+            <div className="text-right">
+              <button
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-ink text-white hover:bg-ink/80 disabled:opacity-50 transition-colors"
+              >
+                {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                {uploading ? "Uploading…" : "Upload"}
+              </button>
+              <p className="text-[11px] text-ink-quiet mt-1">Images, video, or PDF — up to {formatFileSize(ATTACHMENT_MAX_BYTES)}</p>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                accept={ATTACHMENT_ALLOWED_TYPES.join(",")}
+                onChange={handleAttachmentSelected}
+                disabled={uploading}
+                className="hidden"
+              />
+            </div>
+          )}
+        </div>
+
+        {!attachmentsEnabled ? (
+          <p className="text-[13px] text-ink-quiet px-1">
+            Attachments aren't enabled yet — the customer_attachments migration hasn't been applied.
+          </p>
+        ) : (
+          <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
+            {uploadError && (
+              <p role="alert" className="text-[13px] text-red-700 px-5 py-3 border-b border-paper-deep">{uploadError}</p>
+            )}
+            {attachments.length === 0 ? (
+              <p className="text-[13px] text-ink-quiet px-5 py-4">No attachments yet.</p>
+            ) : (
+              <div className="divide-y divide-paper-deep">
+                {attachments.map((att) => {
+                  const kind = attachmentKind(att.file_type);
+                  const Icon = attachmentIcon(kind);
+                  return (
+                    <div key={att.id} className="flex items-center gap-3 px-5 py-3.5">
+                      <div className="w-8 h-8 rounded-lg bg-paper-warm border border-paper-deep flex items-center justify-center flex-shrink-0">
+                        <Icon className="w-4 h-4 text-ink-quiet" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium text-ink truncate">{att.file_name}</p>
+                        <p className="text-[12px] text-ink-quiet">
+                          {formatFileSize(att.file_size)} · {att.created_at?.split("T")[0]}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {(kind === "image" || kind === "video") && (
+                          <button
+                            onClick={() => setPreviewAttachment(att)}
+                            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[12px] font-medium text-ink-quiet hover:bg-paper-warm hover:text-ink transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> Preview
+                          </button>
+                        )}
+                        <button
+                          onClick={() => downloadAttachment(att)}
+                          className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[12px] font-medium text-ink-quiet hover:bg-paper-warm hover:text-ink transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Attachment preview lightbox (images/video only — PDFs open via Download) */}
+      {previewAttachment && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPreviewAttachment(null)}>
+          <div className="relative max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setPreviewAttachment(null)}
+              className="absolute -top-10 right-0 p-1.5 rounded-lg text-white/80 hover:text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="rounded-xl overflow-hidden bg-black">
+              {attachmentKind(previewAttachment.file_type) === "video" ? (
+                <PrivateVideo bucket="customer-media" src={previewAttachment.storage_path} controls autoPlay className="w-full max-h-[70vh] object-contain" />
+              ) : (
+                <PrivateImage bucket="customer-media" src={previewAttachment.storage_path} alt={previewAttachment.file_name} className="w-full max-h-[70vh] object-contain" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Jobs */}
       <section className="mb-6">

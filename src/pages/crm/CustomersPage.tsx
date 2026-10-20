@@ -7,6 +7,8 @@ import { useServices, serviceLabel } from "@/lib/services";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { matchesCustomerQuery, findDuplicateGroups } from "@/lib/customerMatching";
+import { highlightMatch } from "@/lib/highlightMatch";
+import { getRecentCustomerIds } from "@/lib/recentCustomers";
 import {
   Search, Plus, ChevronRight, MapPin, Phone, Mail, X, User, Loader2,
   CopyCheck, ChevronDown, ChevronUp, Tag,
@@ -42,6 +44,32 @@ const EMPTY_FORM: FormState = {
   firstName: "", lastName: "", phone: "", email: "",
   address: "", city: "", state: "", zip: "",
 };
+
+// List-level view/search/tag-filter state, preserved across a visit to a customer
+// detail page and Back — see readListState below.
+type ViewTab = "all" | "tags" | "recent";
+interface ListState {
+  query: string;
+  view: ViewTab;
+  selectedTag: string | null;
+}
+const LIST_STATE_KEY = "crm-customers-list-state";
+const DEFAULT_LIST_STATE: ListState = { query: "", view: "all", selectedTag: null };
+
+function readListState(): ListState {
+  try {
+    const raw = sessionStorage.getItem(LIST_STATE_KEY);
+    if (!raw) return DEFAULT_LIST_STATE;
+    const parsed = JSON.parse(raw);
+    return {
+      query: typeof parsed.query === "string" ? parsed.query : "",
+      view: parsed.view === "tags" || parsed.view === "recent" ? parsed.view : "all",
+      selectedTag: typeof parsed.selectedTag === "string" ? parsed.selectedTag : null,
+    };
+  } catch {
+    return DEFAULT_LIST_STATE;
+  }
+}
 
 function Field({
   label, value, onChange, placeholder, type = "text", required, error,
@@ -138,10 +166,26 @@ export function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [listState, setListState] = useState<ListState>(readListState);
+  const { query, view, selectedTag } = listState;
+  const setQuery = (q: string) => setListState((s) => ({ ...s, query: q }));
+  const setView = (v: ViewTab) => setListState((s) => ({ ...s, view: v }));
+  const setSelectedTag = (t: string | null) => setListState((s) => ({ ...s, selectedTag: t }));
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<FormState>>({});
+
+  // Selection mode is UI-only this batch: no bulk action is wired to it yet.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(LIST_STATE_KEY, JSON.stringify(listState));
+    } catch {
+      // Private browsing / storage disabled: list state just won't survive Back, never breaks the page.
+    }
+  }, [listState]);
 
   useEffect(() => {
     if (businessId || !authLoading) loadCustomers();
@@ -282,26 +326,110 @@ export function CustomersPage() {
     setSaveError(null);
   };
 
+  function toggleSelectMode() {
+    setSelectMode((v) => !v);
+    setSelectedIds(new Set());
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // Distinct tags currently in use, for the Tags view's filter chips.
+  const allTags = useMemo(() => {
+    const seen = new Set<string>();
+    customerList.forEach((c) => c.tags.forEach((t) => seen.add(t)));
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [customerList]);
+
   // Normalization-aware: formatted and unformatted phone numbers both match, name
   // tokens may be typed in any order, and tags are searchable. See lib/customerMatching.
-  const filtered = customerList.filter((c) => matchesCustomerQuery(c, query));
+  // View scoping (All / Tags / Recent) is applied on top of the same search.
+  const filtered = useMemo(() => {
+    const bySearch = customerList.filter((c) => matchesCustomerQuery(c, query));
+    if (view === "recent") {
+      const order = getRecentCustomerIds();
+      const byId = new Map(bySearch.map((c) => [c.id, c] as const));
+      return order.map((id) => byId.get(id)).filter((c): c is Customer => !!c);
+    }
+    if (view === "tags" && selectedTag) {
+      return bySearch.filter((c) => c.tags.includes(selectedTag));
+    }
+    return bySearch;
+  }, [customerList, query, view, selectedTag]);
+
+  function selectAllFiltered() {
+    setSelectedIds(new Set(filtered.map((c) => c.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
 
   // Identification only — never merges, deletes or archives anything.
   const duplicateGroups = useMemo(() => findDuplicateGroups(customerList), [customerList]);
 
+  const emptyMessage = view === "recent"
+    ? "No recently viewed customers yet."
+    : query
+      ? "No customers match your search."
+      : "No customers yet. Add your first one.";
+
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-7">
+      <div className="flex items-center justify-between mb-7 flex-wrap gap-3">
         <div>
           <h1 className="text-[22px] font-semibold text-ink">Customers</h1>
           <p className="text-[14px] text-ink-quiet mt-1">
             {loading ? "Loading…" : `${customerList.length} active customer${customerList.length !== 1 ? "s" : ""}`}
           </p>
         </div>
-        <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowModal(true)}>
-          <Plus className="w-4 h-4" /> Add Customer
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" className="w-auto gap-1.5" onClick={toggleSelectMode}>
+            {selectMode ? "Done" : "Select"}
+          </Button>
+          <Button size="sm" className="w-auto gap-1.5" onClick={() => setShowModal(true)}>
+            <Plus className="w-4 h-4" /> Add Customer
+          </Button>
+        </div>
       </div>
+
+      {/* View tabs: All / Tags / Recent */}
+      <div className="flex items-center gap-1 bg-paper-warm border border-paper-deep rounded-lg p-1 w-fit mb-4">
+        {(["all", "tags", "recent"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`px-4 py-1.5 rounded-md text-[12px] font-medium capitalize transition-colors ${
+              view === v ? "bg-white text-ink shadow-sm" : "text-ink-quiet hover:text-ink"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+
+      {view === "tags" && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {allTags.length === 0 ? (
+            <p className="text-[13px] text-ink-quiet">No tags yet. Add tags from a customer's detail page.</p>
+          ) : allTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                selectedTag === tag ? "bg-ink text-white" : "bg-paper-warm text-ink-soft hover:bg-paper-dark"
+              }`}
+            >
+              <Tag className="w-3 h-3" /> {tag}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mb-5">
         <div className="relative">
@@ -310,10 +438,35 @@ export function CustomersPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name, phone, email, address, or tag…"
-            className="w-full pl-9 pr-4 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors"
+            className="w-full pl-9 pr-9 py-2.5 text-[14px] border border-paper-deep rounded-lg bg-white placeholder:text-ink-quiet focus:outline-none focus:border-ink transition-colors"
           />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-ink-quiet hover:text-ink transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
+
+      {selectMode && (
+        <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-paper-warm border border-paper-deep rounded-lg flex-wrap">
+          <p className="text-[13px] font-medium text-ink">{selectedIds.size} selected</p>
+          <button onClick={selectAllFiltered} className="text-[12px] font-medium text-ink-quiet hover:text-ink underline">
+            Select All
+          </button>
+          <button
+            onClick={clearSelection}
+            disabled={selectedIds.size === 0}
+            className="text-[12px] font-medium text-ink-quiet hover:text-ink underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {!loading && duplicateGroups.length > 0 && <DuplicateReview groups={duplicateGroups} />}
 
@@ -326,9 +479,7 @@ export function CustomersPage() {
         ) : filtered.length === 0 ? (
           <div className="py-16 text-center">
             <User className="w-8 h-8 text-ink-quiet mx-auto mb-3" />
-            <p className="text-[14px] text-ink-quiet">
-              {query ? "No customers match your search." : "No customers yet. Add your first one."}
-            </p>
+            <p className="text-[14px] text-ink-quiet">{emptyMessage}</p>
           </div>
         ) : (
           <div className="divide-y divide-paper-deep">
@@ -338,18 +489,32 @@ export function CustomersPage() {
               const mapsUrl = customer.address
                 ? `https://maps.google.com/?q=${encodeURIComponent([customer.address, customer.city, customer.state, customer.zip].filter(Boolean).join(", "))}`
                 : null;
+              const selected = selectedIds.has(customer.id);
 
               return (
                 <Link
                   key={customer.id}
                   to={`/customers/${customer.id}`}
-                  className="grid grid-cols-[40px_minmax(0,1fr)] sm:flex items-center gap-4 px-5 py-4 hover:bg-paper-warm transition-colors group"
+                  onClick={(e) => {
+                    if (selectMode) { e.preventDefault(); toggleSelect(customer.id); }
+                  }}
+                  className={`grid ${selectMode ? "grid-cols-[24px_40px_minmax(0,1fr)]" : "grid-cols-[40px_minmax(0,1fr)]"} sm:flex items-center gap-4 px-5 py-4 hover:bg-paper-warm transition-colors group`}
                 >
+                  {selectMode && (
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleSelect(customer.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${customer.name}`}
+                      className="w-4 h-4 rounded border-paper-deep accent-ink flex-shrink-0 self-center"
+                    />
+                  )}
                   <div className="w-10 h-10 rounded-full bg-paper-dark flex items-center justify-center text-[13px] font-semibold text-ink-soft flex-shrink-0">
                     {customer.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-semibold text-ink">{customer.name}</p>
+                    <p className="text-[14px] font-semibold text-ink">{highlightMatch(customer.name, query)}</p>
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       {mapsUrl && (
                         <a
@@ -382,7 +547,7 @@ export function CustomersPage() {
                       )}
                     </div>
                   </div>
-                  <div className="col-span-2 flex flex-wrap sm:flex-col items-start sm:items-end gap-1 sm:flex-shrink-0 sm:min-w-[80px] sm:max-w-[220px]">
+                  <div className={`${selectMode ? "col-span-3" : "col-span-2"} flex flex-wrap sm:flex-col items-start sm:items-end gap-1 sm:flex-shrink-0 sm:min-w-[80px] sm:max-w-[220px]`}>
                     {meta?.totalSpend ? (
                       <span className="text-[13px] font-semibold text-ink">${meta.totalSpend.toLocaleString()}</span>
                     ) : null}

@@ -51,6 +51,12 @@ await db.exec(readFileSync(root+'/supabase/migrations/20260926181257_customer_ta
 await db.exec(readFileSync(root+'/supabase/tests/customer_tags.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/migrations/20260926210207_labor_overhead_refunds.sql','utf8'));
 await db.exec(readFileSync(root+'/supabase/tests/labor_overhead_refunds.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/migrations/20260927010000_customer_contacts.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/customer_contacts.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/migrations/20260927020000_customer_attachments.sql','utf8'));
+await db.exec(readFileSync(root+'/supabase/tests/customer_attachments.sql','utf8'));
+console.log('PASS: attachment record bounds, tenant isolation and customer-media storage policies.');
+console.log('PASS: additional-contact add/edit, field bounds and tenant isolation.');
 console.log('PASS: labor rate snapshots/overlap checks and audited, bounded, idempotent owner refunds.');
 console.log('PASS: customer tag normalization, bounds and tenant isolation.');
 console.log('PASS: document authorization, customer decisions, expiry, stale revisions, retry and immutable evidence.');

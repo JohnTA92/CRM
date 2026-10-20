@@ -9,10 +9,17 @@ import { jobStatusLabel, invoiceStatusLabel } from "@/data/crm";
 import { useServices, serviceLabel } from "@/lib/services";
 import { useAuth } from "@/lib/auth";
 import { EXPENSE_CATEGORIES } from "@/pages/crm/ExpensesPage";
+import { OutstandingInvoicesPanel } from "@/components/OutstandingInvoicesPanel";
+import {
+  type PeriodPreset, type DateRange, PERIOD_LABELS,
+  computePeriodRange, computeComparisonRange, isDateInRange, trendPct,
+  formatRangeLabel, todayUTC,
+} from "@/lib/dashboardPeriods";
+import { classifyInvoiceAging, AGING_BUCKET_LABELS, type AgingBucket } from "@/lib/invoiceAging";
 import {
   Briefcase, Users, DollarSign, AlertCircle, ArrowRight, Clock,
   TrendingUp, TrendingDown, FileText, Receipt, Target, ChevronRight,
-  Loader2, TriangleAlert, CheckCircle2, Wallet,
+  Loader2, TriangleAlert, CheckCircle2, Wallet, ChevronDown,
 } from "lucide-react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -25,50 +32,6 @@ function daysBetween(isoA: string, isoB: string) {
   return Math.floor((new Date(isoB).getTime() - new Date(isoA).getTime()) / 86400000);
 }
 
-function startOf(period: "today" | "wtd" | "mtd" | "qtd"): string {
-  const now = new Date();
-  if (period === "today") return now.toISOString().split("T")[0];
-  if (period === "wtd") {
-    const d = new Date(now);
-    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-    return d.toISOString().split("T")[0];
-  }
-  if (period === "mtd") return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  const q = Math.floor(now.getMonth() / 3);
-  return `${now.getFullYear()}-${String(q * 3 + 1).padStart(2, "0")}-01`;
-}
-
-function startOfPrior(period: "today" | "wtd" | "mtd" | "qtd"): { from: string; to: string } {
-  const now = new Date();
-  if (period === "today") {
-    const d = new Date(now); d.setFullYear(d.getFullYear() - 1);
-    const s = d.toISOString().split("T")[0];
-    return { from: s, to: s };
-  }
-  if (period === "wtd") {
-    const start = new Date(now);
-    start.setDate(start.getDate() - start.getDay());
-    start.setFullYear(start.getFullYear() - 1);
-    const end = new Date(start);
-    end.setDate(end.getDate() + now.getDay());
-    return { from: start.toISOString().split("T")[0], to: end.toISOString().split("T")[0] };
-  }
-  if (period === "mtd") {
-    const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-    const m = now.getMonth() === 0 ? 12 : now.getMonth();
-    return {
-      from: `${y}-${String(m).padStart(2, "0")}-01`,
-      to: `${y}-${String(m).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
-    };
-  }
-  const q = Math.floor(now.getMonth() / 3);
-  const monthOffset = now.getMonth() - q * 3;
-  return {
-    from: `${now.getFullYear() - 1}-${String(q * 3 + 1).padStart(2, "0")}-01`,
-    to: `${now.getFullYear() - 1}-${String(q * 3 + 1 + monthOffset).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
-  };
-}
-
 function jobStatusBadge(s: string): "warning" | "success" | "error" | "muted" | "default" | "gold" {
   const m: Record<string, any> = { draft: "muted", quoted: "warning", scheduled: "default", "in-progress": "gold", complete: "success", invoiced: "muted" };
   return m[s] ?? "default";
@@ -78,11 +41,35 @@ function invStatusBadge(s: string): "warning" | "success" | "error" | "muted" | 
   return m[s] ?? "default";
 }
 
-const PERIOD_LABELS: Record<string, string> = { today: "Today", wtd: "This Week", mtd: "This Month", qtd: "This Quarter" };
+// Preset/custom-range selection, preserved across a visit to a detail page and
+// Back — same lazy-init/sessionStorage pattern as CustomersPage.tsx/JobsPage.tsx.
+interface PeriodState {
+  preset: PeriodPreset;
+  customStart: string;
+  customEnd: string;
+}
+const PERIOD_STATE_KEY = "crm-dashboard-period-state";
+const DEFAULT_PERIOD_STATE: PeriodState = { preset: "thisMonth", customStart: "", customEnd: "" };
+const PERIOD_PRESET_VALUES = new Set(["today", "thisWeek", "thisMonth", "thisQuarter", "thisYear", "last30", "last90", "custom"]);
+
+function readPeriodState(): PeriodState {
+  try {
+    const raw = sessionStorage.getItem(PERIOD_STATE_KEY);
+    if (!raw) return DEFAULT_PERIOD_STATE;
+    const p = JSON.parse(raw);
+    return {
+      preset: PERIOD_PRESET_VALUES.has(p.preset) ? p.preset : "thisMonth",
+      customStart: typeof p.customStart === "string" ? p.customStart : "",
+      customEnd: typeof p.customEnd === "string" ? p.customEnd : "",
+    };
+  } catch {
+    return DEFAULT_PERIOD_STATE;
+  }
+}
 
 // ─── sub-components ──────────────────────────────────────────────────────────
 
-function TrendPill({ pct }: { pct: number | null }) {
+function TrendPill({ pct, label }: { pct: number | null; label: string }) {
   if (pct === null) return null;
   const up = pct >= 0;
   return (
@@ -90,14 +77,14 @@ function TrendPill({ pct }: { pct: number | null }) {
       up ? "bg-[#e8f5e9] text-[#2e7d32]" : "bg-[#ffebee] text-[#c62828]"
     }`}>
       {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-      {Math.abs(pct)}% vs last yr
+      {Math.abs(pct)}% {label}
     </span>
   );
 }
 
-function KpiCard({ label, value, sub, icon: Icon, accent, trend }: {
+function KpiCard({ label, value, sub, icon: Icon, accent, trend, trendLabel, note }: {
   label: string; value: string | number; sub?: string;
-  icon: React.ElementType; accent?: string; trend?: number | null;
+  icon: React.ElementType; accent?: string; trend?: number | null; trendLabel?: string; note?: string;
 }) {
   return (
     <div className="bg-white rounded-xl border border-paper-deep p-5 flex items-start gap-4">
@@ -109,8 +96,9 @@ function KpiCard({ label, value, sub, icon: Icon, accent, trend }: {
         <p className="text-[24px] font-semibold text-ink leading-tight mt-0.5">{value}</p>
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           {sub && <p className="text-[12px] text-ink-quiet">{sub}</p>}
-          {trend !== undefined && <TrendPill pct={trend ?? null} />}
+          {trend !== undefined && <TrendPill pct={trend ?? null} label={trendLabel ?? "vs. comparison period"} />}
         </div>
+        {note && <p className="text-[10px] text-ink-quiet mt-1">{note}</p>}
       </div>
     </div>
   );
@@ -123,7 +111,7 @@ export function DashboardPage() {
   const { business } = useAuth();
   const businessId = business?.id ?? "";
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<"today" | "wtd" | "mtd" | "qtd">("mtd");
+  const [periodState, setPeriodState] = useState<PeriodState>(readPeriodState);
 
   const [jobs, setJobs] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
@@ -136,6 +124,18 @@ export function DashboardPage() {
   const [monthlyGoal, setMonthlyGoal] = useState<number>(0);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState("");
+  const [savingGoal, setSavingGoal] = useState(false);
+  const [goalError, setGoalError] = useState("");
+
+  useEffect(() => {
+    try { sessionStorage.setItem(PERIOD_STATE_KEY, JSON.stringify(periodState)); } catch { /* storage unavailable: just won't survive Back */ }
+  }, [periodState]);
+
+  // Clear stale goal state immediately when switching businesses, before the
+  // new business's data (or lack of a goal) has finished loading.
+  useEffect(() => {
+    setMonthlyGoal(0); setEditingGoal(false); setGoalInput(""); setGoalError("");
+  }, [businessId]);
 
   const loadVersion = useRef(0);
   useEffect(() => { loadAll(); return () => { loadVersion.current++; }; }, [businessId]);
@@ -167,36 +167,37 @@ export function DashboardPage() {
     setLoading(false);
   }
 
-  const today = new Date().toISOString().split("T")[0];
-  const periodStart = startOf(period);
-  const prior = startOfPrior(period);
+  const today = todayUTC();
+
+  // ── Period range: calendar periods run through today; custom range rejects
+  // a reversed/incomplete selection rather than silently swapping it. ──
+  const rangeResult = computePeriodRange(periodState.preset, { start: periodState.customStart, end: periodState.customEnd }, today);
+  const rangeError = rangeResult.ok ? null : rangeResult.error;
+  const range: DateRange = rangeResult.ok ? rangeResult.range : (computePeriodRange("thisMonth", undefined, today) as { ok: true; range: DateRange }).range;
+  const comparisonRange = computeComparisonRange(periodState.preset, range);
+  const periodLabel = PERIOD_LABELS[periodState.preset];
+  const rangeDisclosure = formatRangeLabel(range);
 
   // ── KPI calculations ──
   const paidInvoices = invoices.filter((i) => i.status === "paid");
-  const periodPaid = payments.filter((p) => p.paid_at?.split("T")[0] >= periodStart && p.paid_at?.split("T")[0] <= today);
-  const priorPaid = payments.filter((i) => {
-    const d = (i.paid_at ?? i.created_at)?.split("T")[0];
-    return d >= prior.from && d <= prior.to;
-  });
+  const periodPaid = payments.filter((p) => isDateInRange(p.paid_at, range));
+  const priorPaid = payments.filter((p) => isDateInRange(p.paid_at, comparisonRange));
   const revenue = sumMoney(periodPaid, (p) => p.amount);
   const priorRevenue = sumMoney(priorPaid, (p) => p.amount);
-  const revTrend = priorRevenue > 0 ? Math.round(((revenue - priorRevenue) / priorRevenue) * 100) : null;
+  const revTrend = trendPct(revenue, priorRevenue);
 
-  const completedJobs = jobs.filter((j) =>
-    ["complete", "invoiced"].includes(j.status) && (j.completed_at ?? j.scheduled_date)?.split("T")[0] >= periodStart
-  );
-  const priorCompleted = jobs.filter((j) => {
-    const d = (j.updated_at ?? j.created_at)?.split("T")[0];
-    return ["complete", "invoiced"].includes(j.status) && d >= prior.from && d <= prior.to;
-  });
-  const jobsTrend = priorCompleted.length > 0
-    ? Math.round(((completedJobs.length - priorCompleted.length) / priorCompleted.length) * 100)
-    : null;
-  const avgJobSize = completedJobs.length > 0 ? Math.round(revenue / completedJobs.length) : 0;
-  const newJobsBooked = jobs.filter((j) => j.created_at?.split("T")[0] >= periodStart).length;
+  // Completed jobs use the verified completion timestamp only — never a
+  // silent fallback to scheduled/updated dates — on BOTH the current and
+  // comparison side, so the two sides measure the same thing.
+  const completedJobs = jobs.filter((j) => ["complete", "invoiced"].includes(j.status) && j.completed_at && isDateInRange(j.completed_at, range));
+  const priorCompleted = jobs.filter((j) => ["complete", "invoiced"].includes(j.status) && j.completed_at && isDateInRange(j.completed_at, comparisonRange));
+  const jobsTrend = trendPct(completedJobs.length, priorCompleted.length);
+  const completedWithoutDate = jobs.filter((j) => ["complete", "invoiced"].includes(j.status) && !j.completed_at).length;
+
+  const jobsCreated = jobs.filter((j) => isDateInRange(j.created_at, range)).length;
 
   // ── P&L ──
-  const periodExpenses = expenses.filter((e) => (e.date ?? "") >= periodStart && (e.date ?? "") <= today);
+  const periodExpenses = expenses.filter((e) => isDateInRange(e.date, range));
   const totalExpenses = sumMoney(periodExpenses, e => Number(e.amount));
   const grossProfit = (Math.round(revenue * 100) - Math.round(totalExpenses * 100)) / 100;
   const marginPct = revenue > 0 ? Math.round((grossProfit / revenue) * 100) : 0;
@@ -223,11 +224,10 @@ export function DashboardPage() {
   const lostEstimates = estimates.filter((e) => ["declined", "expired"].includes(e.status));
   const closeRate = sentEstimates.length > 0 ? Math.round((wonEstimates.length / sentEstimates.length) * 100) : 0;
 
-  // ── Invoice aging ──
-  const agingBase = (i: any) => (i.sent_at ?? i.due_at ?? i.created_at)?.split("T")[0] ?? today;
-  const aging30 = unpaidInvoices.filter((i) => daysBetween(agingBase(i), today) < 30);
-  const aging60 = unpaidInvoices.filter((i) => { const d = daysBetween(agingBase(i), today); return d >= 30 && d < 60; });
-  const aging60plus = unpaidInvoices.filter((i) => daysBetween(agingBase(i), today) >= 60);
+  // ── Invoice aging — due-date based, with "not yet due" and "no due date"
+  // kept distinct from the overdue day-count buckets. ──
+  const agingGroups: Record<AgingBucket, any[]> = { noDueDate: [], notYetDue: [], under30: [], between30and60: [], over60: [] };
+  unpaidInvoices.forEach((inv) => { agingGroups[classifyInvoiceAging(inv, today)].push(inv); });
 
   // ── Smart alerts ──
   const alerts: { type: "warn" | "error" | "info"; text: string; link: string }[] = [];
@@ -247,7 +247,7 @@ export function DashboardPage() {
   if (draftEsts.length > 0)
     alerts.push({ type: "warn", text: `${draftEsts.length} draft estimate${draftEsts.length > 1 ? "s" : ""} not yet sent`, link: "/estimates" });
 
-  // ── Avg by service type ──
+  // ── Avg by service type (all-time, paid invoices — same population both sides) ──
   const serviceStats: Record<string, { count: number; revenue: number }> = {};
   paidInvoices.forEach((inv: any) => {
     const job = jobs.find((j: any) => j.id === inv.job_id);
@@ -264,17 +264,26 @@ export function DashboardPage() {
   const customerNames: Record<string, string> = {};
   customers.forEach((c: any) => { customerNames[c.id] = c.name; });
 
-  // ── Monthly goal (always MTD) ──
+  // ── Monthly goal (always MTD, regardless of the page's period selector) ──
   const mtdRevenue = sumMoney(payments.filter((p) => p.paid_at?.startsWith(today.slice(0, 7)) && p.paid_at?.split("T")[0] <= today), (p) => p.amount);
   const goalPct = monthlyGoal > 0 ? Math.max(0, Math.min(100, Math.round((mtdRevenue / monthlyGoal) * 100))) : 0;
   const goalGap = monthlyGoal > 0 ? Math.max(0, monthlyGoal - mtdRevenue) : 0;
 
   async function saveGoal() {
+    if (savingGoal) return;
     const val = Math.round(parseFloat(goalInput.replace(/[^0-9.]/g, "")));
-    if (!isNaN(val) && val > 0) {
-      setMonthlyGoal(val);
-      await supabase.from("company_settings").upsert({ id: businessId, monthly_goal: val });
+    if (!Number.isFinite(val) || val <= 0) {
+      setGoalError("Enter a whole number greater than 0.");
+      return;
     }
+    setSavingGoal(true);
+    setGoalError("");
+    const { error } = await supabase.from("company_settings").upsert({ id: businessId, monthly_goal: val });
+    setSavingGoal(false);
+    if (error) { setGoalError(error.message); return; }
+    // Only reflect the new goal once the save actually succeeded — no
+    // optimistic update that could show a goal that never persisted.
+    setMonthlyGoal(val);
     setEditingGoal(false);
   }
 
@@ -283,32 +292,44 @@ export function DashboardPage() {
   if (loadError) return <div className="p-8"><h1 className="text-xl font-semibold">Dashboard</h1><p role="alert">Could not load financial data: {loadError}</p><button onClick={loadAll}>Retry</button></div>;
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-8">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
         <div>
           <h1 className="text-[22px] font-semibold text-ink">Dashboard</h1>
           <p className="text-[14px] text-ink-quiet mt-0.5">
-            {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+            {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })}
           </p>
         </div>
         <div className="flex items-center gap-3">
           {loading && <Loader2 className="w-4 h-4 animate-spin text-ink-quiet" />}
-          <div className="flex gap-1 bg-paper-warm border border-paper-deep rounded-lg p-1">
-            {(["today", "wtd", "mtd", "qtd"] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={`px-3 py-1.5 rounded-md text-[12px] font-semibold transition-colors ${
-                  period === p ? "bg-white shadow-sm text-ink" : "text-ink-quiet hover:text-ink"
-                }`}
-              >
-                {p === "today" ? "Today" : p.toUpperCase()}
-              </button>
-            ))}
+          <div className="relative">
+            <select
+              value={periodState.preset}
+              onChange={(e) => setPeriodState((s) => ({ ...s, preset: e.target.value as PeriodPreset }))}
+              className="pl-3 pr-8 py-2 text-[13px] font-semibold border border-paper-deep rounded-lg bg-white appearance-none focus:outline-none focus:border-ink transition-colors"
+            >
+              {(Object.keys(PERIOD_LABELS) as PeriodPreset[]).map((p) => (
+                <option key={p} value={p}>{PERIOD_LABELS[p]}</option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-quiet pointer-events-none" />
           </div>
+          {periodState.preset === "custom" && (
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={periodState.customStart} onChange={(e) => setPeriodState((s) => ({ ...s, customStart: e.target.value }))}
+                className="px-2.5 py-2 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink transition-colors" />
+              <span className="text-ink-quiet text-[12px]">to</span>
+              <input type="date" value={periodState.customEnd} onChange={(e) => setPeriodState((s) => ({ ...s, customEnd: e.target.value }))}
+                className="px-2.5 py-2 text-[13px] border border-paper-deep rounded-lg bg-white focus:outline-none focus:border-ink transition-colors" />
+            </div>
+          )}
         </div>
       </div>
+      <p className="text-[12px] text-ink-quiet mb-1">
+        {rangeError ? <span role="alert" className="text-[#c62828]">{rangeError} Showing {rangeDisclosure} instead.</span> : rangeDisclosure}
+      </p>
+      <p className="text-[11px] text-ink-quiet mb-6">Week starts Monday. Calendar periods run through today. All dates and times are UTC.</p>
 
       {/* ── Smart Alerts ── */}
       {alerts.length > 0 && (
@@ -336,12 +357,12 @@ export function DashboardPage() {
         <div className="px-5 py-3 border-b border-paper-deep bg-paper-warm">
           <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide">Revenue Pipeline</p>
         </div>
-        <div className="grid grid-cols-4 divide-x divide-paper-deep">
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-paper-deep">
           {([
             { label: "Pending Estimates", count: pendingEstimates.length, value: quotedValue, color: "text-[#e65100]", link: "/estimates" },
             { label: "Jobs Scheduled", count: scheduledJobs.length, value: null, color: "text-[#1565c0]", link: "/jobs" },
             { label: "Awaiting Payment", count: unpaidInvoices.length, value: unpaidValue, color: "text-[#f57c00]", link: "/invoices" },
-            { label: `Collected (${PERIOD_LABELS[period]})`, count: periodPaid.length, value: revenue, color: "text-[#2e7d32]", link: "/invoices" },
+            { label: `Collected (${periodLabel})`, count: periodPaid.length, value: revenue, color: "text-[#2e7d32]", link: "/invoices" },
           ] as const).map((stage) => (
             <Link key={stage.label} to={stage.link} className="px-5 py-4 hover:bg-paper-warm transition-colors">
               <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide mb-1 truncate">{stage.label}</p>
@@ -355,11 +376,14 @@ export function DashboardPage() {
       </div>
 
       {/* ── KPI Cards ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard label="Net Payments Collected" value={fmt$(revenue)} sub={PERIOD_LABELS[period]} icon={DollarSign} accent="bg-[#e8f5e9]" trend={revTrend} />
-        <KpiCard label="Jobs Completed" value={completedJobs.length} sub={PERIOD_LABELS[period]} icon={Briefcase} accent="bg-[#e3f2fd]" trend={jobsTrend} />
-        <KpiCard label="Avg Job Size" value={avgJobSize > 0 ? fmt$(avgJobSize) : "—"} sub="revenue ÷ completed jobs" icon={TrendingUp} accent="bg-[#f3e5f5]" />
-        <KpiCard label="New Jobs Booked" value={newJobsBooked} sub={PERIOD_LABELS[period]} icon={Clock} accent="bg-[#fff3e0]" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+        <KpiCard label="Net Payments Collected" value={fmt$(revenue)} sub={periodLabel} icon={DollarSign} accent="bg-[#e8f5e9]" trend={revTrend} trendLabel="vs. comparison period" />
+        <KpiCard
+          label="Jobs Completed" value={completedJobs.length} sub={periodLabel} icon={Briefcase} accent="bg-[#e3f2fd]"
+          trend={jobsTrend} trendLabel="vs. comparison period"
+          note={completedWithoutDate > 0 ? `${completedWithoutDate} completed job${completedWithoutDate !== 1 ? "s" : ""} (all time) have no recorded completion date and aren't counted here.` : undefined}
+        />
+        <KpiCard label="Jobs Created" value={jobsCreated} sub={periodLabel} icon={Clock} accent="bg-[#fff3e0]" />
       </div>
 
       {/* ── Financial Health Strip ── */}
@@ -377,7 +401,7 @@ export function DashboardPage() {
             <div className="px-5 py-3 border-b border-paper-deep bg-paper-warm">
               <p className="text-[11px] font-semibold text-ink-quiet uppercase tracking-wide">Financial Health</p>
             </div>
-            <div className="grid grid-cols-4 divide-x divide-paper-deep">
+            <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-paper-deep">
               <div className="px-5 py-4">
                 <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Cash Margin</p>
                 <p className={`text-[24px] font-bold leading-none ${
@@ -388,19 +412,20 @@ export function DashboardPage() {
                 }`}>
                   {overallMargin !== null ? `${overallMargin}%` : "—"}
                 </p>
-                <p className="text-[11px] text-ink-quiet mt-1">all-time</p>
+                <Badge variant="muted" className="mt-1">All time</Badge>
               </div>
               <div className="px-5 py-4">
                 <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Avg Ticket</p>
                 <p className="text-[24px] font-bold leading-none text-ink">{allAvgTicket > 0 ? fmt$(allAvgTicket) : "—"}</p>
                 <p className="text-[11px] text-ink-quiet mt-1">{allPaidCount} paid invoices</p>
+                <Badge variant="muted" className="mt-1">All time</Badge>
               </div>
               <div className="px-5 py-4">
                 <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Net Cash Flow</p>
                 <p className={`text-[24px] font-bold leading-none ${allGrossProfit >= 0 ? "text-[#1565c0]" : "text-[#c62828]"}`}>
                   {allGrossProfit < 0 ? "-" : ""}{fmt$(Math.abs(allGrossProfit))}
                 </p>
-                <p className="text-[11px] text-ink-quiet mt-1">revenue minus expenses</p>
+                <Badge variant="muted" className="mt-1">All time</Badge>
               </div>
               <div className="px-5 py-4">
                 <p className="text-[11px] text-ink-quiet font-medium mb-1 uppercase tracking-wide">Top Service</p>
@@ -408,6 +433,7 @@ export function DashboardPage() {
                   <>
                     <p className="text-[14px] font-bold text-ink leading-tight">{serviceLabel(highestService[0], services)}</p>
                     <p className="text-[11px] text-ink-quiet mt-1">{fmt$(Math.round(highestService[1].revenue / Math.max(1, highestService[1].count)))} avg ticket</p>
+                    <Badge variant="muted" className="mt-1">All time</Badge>
                   </>
                 ) : (
                   <p className="text-[24px] font-bold text-ink-quiet">—</p>
@@ -422,7 +448,7 @@ export function DashboardPage() {
       <div className="bg-white rounded-xl border border-paper-deep mb-6 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
           <p className="text-[13px] font-semibold text-ink flex items-center gap-1.5">
-            <Wallet className="w-4 h-4 text-ink-quiet" /> Cash Flow — {PERIOD_LABELS[period]}
+            <Wallet className="w-4 h-4 text-ink-quiet" /> Cash Flow — {periodLabel}
           </p>
           <Link to="/expenses" className="text-[12px] text-accent hover:underline flex items-center gap-0.5">
             Manage expenses <ChevronRight className="w-3 h-3" />
@@ -430,7 +456,7 @@ export function DashboardPage() {
         </div>
 
         {/* Top row: Revenue / Expenses / Net Cash Flow */}
-        <div className="grid grid-cols-3 divide-x divide-paper-deep border-b border-paper-deep">
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-paper-deep border-b border-paper-deep">
           {[
             { label: "Revenue", value: revenue, color: "text-[#2e7d32]", sub: "payments less refunds" },
             { label: "Expenses", value: totalExpenses, color: "text-[#c62828]", sub: `${periodExpenses.length} entries` },
@@ -486,7 +512,7 @@ export function DashboardPage() {
         {Object.keys(expensesByCategory).length > 0 ? (
           <div className="px-6 py-4">
             <p className="text-[12px] font-semibold text-ink-quiet uppercase tracking-wide mb-3">Expenses by Category</p>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {Object.entries(expensesByCategory)
                 .sort(([, a], [, b]) => b - a)
                 .map(([cat, amt]) => {
@@ -506,7 +532,7 @@ export function DashboardPage() {
           </div>
         ) : (
           <div className="px-6 py-5 text-[13px] text-ink-quiet">
-            No expenses logged for {PERIOD_LABELS[period].toLowerCase()}.{" "}
+            No expenses logged for {periodLabel.toLowerCase()}.{" "}
             <Link to="/expenses" className="text-accent hover:underline">Add expenses →</Link>
           </div>
         )}
@@ -517,7 +543,9 @@ export function DashboardPage() {
         {/* Today's Schedule */}
         <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
-            <p className="text-[13px] font-semibold text-ink">Today's Jobs</p>
+            <p className="text-[13px] font-semibold text-ink flex items-center gap-1.5">
+              Today's Jobs <Badge variant="muted">Today</Badge>
+            </p>
             <Badge variant={todayJobs.length > 0 ? "default" : "muted"}>{todayJobs.length} scheduled</Badge>
           </div>
           <div className="divide-y divide-paper-deep">
@@ -541,14 +569,16 @@ export function DashboardPage() {
         <div className="bg-white rounded-xl border border-paper-deep p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[13px] font-semibold text-ink flex items-center gap-1.5">
-              <Target className="w-4 h-4 text-ink-quiet" /> Monthly Goal
+              <Target className="w-4 h-4 text-ink-quiet" /> Monthly Goal <Badge variant="muted">This month</Badge>
             </p>
-            <button
-              onClick={() => { setGoalInput(monthlyGoal > 0 ? String(monthlyGoal) : ""); setEditingGoal(true); }}
-              className="text-[12px] text-accent hover:underline"
-            >
-              {monthlyGoal > 0 ? "Edit" : "Set goal"}
-            </button>
+            {!editingGoal && (
+              <button
+                onClick={() => { setGoalInput(monthlyGoal > 0 ? String(monthlyGoal) : ""); setGoalError(""); setEditingGoal(true); }}
+                className="text-[12px] text-accent hover:underline"
+              >
+                {monthlyGoal > 0 ? "Edit" : "Set goal"}
+              </button>
+            )}
           </div>
           {editingGoal ? (
             <div className="space-y-2">
@@ -556,14 +586,18 @@ export function DashboardPage() {
                 type="number"
                 autoFocus
                 value={goalInput}
+                disabled={savingGoal}
                 onChange={(e) => setGoalInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") saveGoal(); if (e.key === "Escape") setEditingGoal(false); }}
                 placeholder="e.g. 5000"
-                className="w-full px-3 py-2 text-[14px] border border-paper-deep rounded-lg focus:outline-none focus:border-ink"
+                className="w-full px-3 py-2 text-[14px] border border-paper-deep rounded-lg focus:outline-none focus:border-ink disabled:opacity-50"
               />
+              {goalError && <p role="alert" className="text-[11px] text-[#c62828]">{goalError}</p>}
               <div className="flex gap-2">
-                <button onClick={saveGoal} className="flex-1 py-1.5 text-[12px] font-semibold bg-ink text-white rounded-lg">Save</button>
-                <button onClick={() => setEditingGoal(false)} className="flex-1 py-1.5 text-[12px] border border-paper-deep rounded-lg hover:bg-paper-warm">Cancel</button>
+                <button onClick={saveGoal} disabled={savingGoal} className="flex-1 py-1.5 text-[12px] font-semibold bg-ink text-white rounded-lg disabled:opacity-50 flex items-center justify-center gap-1.5">
+                  {savingGoal && <Loader2 className="w-3 h-3 animate-spin" />} Save
+                </button>
+                <button onClick={() => { setEditingGoal(false); setGoalError(""); }} disabled={savingGoal} className="flex-1 py-1.5 text-[12px] border border-paper-deep rounded-lg hover:bg-paper-warm disabled:opacity-50">Cancel</button>
               </div>
             </div>
           ) : monthlyGoal > 0 ? (
@@ -631,9 +665,9 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         {/* Invoice Aging */}
         <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-paper-deep bg-paper-warm flex-wrap gap-2">
             <p className="text-[13px] font-semibold text-ink flex items-center gap-1.5">
-              <Receipt className="w-4 h-4 text-ink-quiet" /> Invoice Aging
+              <Receipt className="w-4 h-4 text-ink-quiet" /> Invoice Aging <Badge variant="muted">Current outstanding</Badge>
             </p>
             <Link to="/invoices" className="text-[12px] text-accent hover:underline flex items-center gap-0.5">
               All invoices <ChevronRight className="w-3 h-3" />
@@ -643,32 +677,37 @@ export function DashboardPage() {
             <p className="px-5 py-5 text-[13px] text-ink-quiet">No outstanding invoices.</p>
           ) : (
             <div className="divide-y divide-paper-deep">
-              {[
-                { label: "Under 30 days", items: aging30, dotColor: "#43a047", textColor: "text-[#2e7d32]", bg: "bg-[#e8f5e9] text-[#2e7d32]" },
-                { label: "30–60 days", items: aging60, dotColor: "#fb8c00", textColor: "text-[#e65100]", bg: "bg-[#fff3e0] text-[#e65100]" },
-                { label: "60+ days overdue", items: aging60plus, dotColor: "#e53935", textColor: "text-[#c62828]", bg: "bg-[#ffebee] text-[#c62828]" },
-              ].map((bucket) => (
-                <div key={bucket.label} className="flex items-center justify-between px-5 py-4">
-                  <div className="flex items-center gap-3">
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: bucket.dotColor }} />
-                    <p className="text-[13px] text-ink">{bucket.label}</p>
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${bucket.bg}`}>
-                      {bucket.items.length}
-                    </span>
+              {(["notYetDue", "under30", "between30and60", "over60", "noDueDate"] as AgingBucket[]).map((bucket) => {
+                const items = agingGroups[bucket];
+                if (items.length === 0) return null;
+                const dotColor = bucket === "notYetDue" ? "#1565c0" : bucket === "under30" ? "#43a047" : bucket === "between30and60" ? "#fb8c00" : bucket === "over60" ? "#e53935" : "#9e9e9e";
+                const bg = bucket === "notYetDue" ? "bg-[#e3f2fd] text-[#1565c0]" : bucket === "under30" ? "bg-[#e8f5e9] text-[#2e7d32]" : bucket === "between30and60" ? "bg-[#fff3e0] text-[#e65100]" : bucket === "over60" ? "bg-[#ffebee] text-[#c62828]" : "bg-paper-warm text-ink-quiet";
+                const textColor = bucket === "notYetDue" ? "text-[#1565c0]" : bucket === "under30" ? "text-[#2e7d32]" : bucket === "between30and60" ? "text-[#e65100]" : bucket === "over60" ? "text-[#c62828]" : "text-ink-quiet";
+                return (
+                  <div key={bucket} className="flex items-center justify-between px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor }} />
+                      <p className="text-[13px] text-ink">{AGING_BUCKET_LABELS[bucket]}</p>
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${bg}`}>
+                        {items.length}
+                      </span>
+                    </div>
+                    <p className={`text-[14px] font-semibold ${textColor}`}>
+                      {fmt$(sumMoney(items, balanceDue))}
+                    </p>
                   </div>
-                  <p className={`text-[14px] font-semibold ${bucket.textColor}`}>
-                    {fmt$(sumMoney(bucket.items, balanceDue))}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
+              <p className="px-5 py-2.5 text-[11px] text-ink-quiet">Overdue buckets are measured from each invoice's due date, not when it was sent.</p>
             </div>
           )}
         </div>
 
         {/* Avg Job Value by Service Type */}
         <div className="bg-white rounded-xl border border-paper-deep overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-paper-deep bg-paper-warm">
+          <div className="px-5 py-3.5 border-b border-paper-deep bg-paper-warm flex items-center gap-1.5">
             <p className="text-[13px] font-semibold text-ink">Avg Job Value by Service</p>
+            <Badge variant="muted">All time</Badge>
           </div>
           {Object.keys(serviceStats).length === 0 ? (
             <p className="px-5 py-5 text-[13px] text-ink-quiet">No paid jobs yet to analyze.</p>
@@ -693,6 +732,11 @@ export function DashboardPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ── Outstanding Invoices ── */}
+      <div className="mb-6">
+        <OutstandingInvoicesPanel invoices={unpaidInvoices} customerNames={customerNames} />
       </div>
 
       {/* ── Recent Jobs + Recent Invoices ── */}
@@ -756,14 +800,14 @@ export function DashboardPage() {
             All customers <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-        <div className="flex items-center divide-x divide-paper-deep">
+        <div className="grid grid-cols-2 sm:flex sm:items-center divide-x divide-y sm:divide-y-0 divide-paper-deep">
           {[
             { label: "Total customers", value: customers.filter((c: any) => !c.archived).length },
             { label: "Jobs scheduled", value: scheduledJobs.length },
             { label: "Pending estimates", value: pendingEstimates.length },
             { label: "Unpaid invoices", value: unpaidInvoices.length },
           ].map(({ label, value }) => (
-            <div key={label} className="flex-1 px-5 py-4 text-center">
+            <div key={label} className="sm:flex-1 px-5 py-4 text-center">
               <p className="text-[22px] font-semibold text-ink">{value}</p>
               <p className="text-[12px] text-ink-quiet mt-0.5">{label}</p>
             </div>
